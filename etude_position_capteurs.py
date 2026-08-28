@@ -48,7 +48,13 @@ PHASE2_POSITIONS_PO = [3.94, 4.72, 5.12, 5.51, 5.91, 6.30]
 SIDES = ["Gauche", "Droit"]
 REPS = [1, 2, 3]
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, "frozen", False):
+    # Exécutable PyInstaller (--onefile) : les fichiers sont extraits dans un
+    # dossier temporaire différent à CHAQUE lancement, et supprimé à la fermeture.
+    # On stocke donc les résultats à côté du .exe (persistant d'un lancement à l'autre).
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(SCRIPT_DIR, "resultats_etude")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -309,10 +315,16 @@ def export_to_excel():
         return
 
     print("\n=== Export des résultats collectés vers le classeur Excel ===\n")
-    xlsx_path = ask("Chemin du classeur Excel (Etude_longueur_position_capteurs.xlsx)")
-    if not xlsx_path or not os.path.exists(xlsx_path):
-        print("Fichier introuvable.")
-        return
+    while True:
+        xlsx_path = ask("Chemin du classeur Excel (Etude_longueur_position_capteurs.xlsx)")
+        if not xlsx_path:
+            print("Chemin vide, réessayez.")
+            continue
+        xlsx_path = xlsx_path.strip().strip('"').strip("'")
+        if not os.path.exists(xlsx_path):
+            print(f"Fichier introuvable : {xlsx_path}")
+            continue
+        break
 
     field_to_col_1 = {
         "Date": 2, "Operateur": 3, "N_tube": 4, "Longueur_tube_po": 5,
@@ -369,23 +381,47 @@ def export_to_excel():
         return written, not_found
 
     wb = openpyxl.load_workbook(xlsx_path)
+    total_written = 0
+    total_missed = []
 
     rows1 = list(csv.DictReader(open(PHASE1_CSV, encoding="utf-8"))) if os.path.exists(PHASE1_CSV) else []
     if rows1:
         n, missed = write_sheet(wb["Collecte - Tubes sains"], rows1, field_to_col_1, match_cols_1)
         print(f"Phase 1 : {n}/{len(rows1)} lignes écrites.")
+        total_written += n
+        total_missed += missed
         if missed:
-            print(f"  {len(missed)} ligne(s) sans correspondance : {missed}")
+            print(f"  -> {len(missed)} ligne(s) SANS correspondance trouvée dans la feuille :")
+            for m in missed:
+                print(f"     {m}")
 
     rows2 = list(csv.DictReader(open(PHASE2_CSV, encoding="utf-8"))) if os.path.exists(PHASE2_CSV) else []
     if rows2:
         n, missed = write_sheet(wb["Collecte - Défaut connu"], rows2, field_to_col_2, match_cols_2)
         print(f"Phase 2 : {n}/{len(rows2)} lignes écrites.")
+        total_written += n
+        total_missed += missed
         if missed:
-            print(f"  {len(missed)} ligne(s) sans correspondance : {missed}")
+            print(f"  -> {len(missed)} ligne(s) SANS correspondance trouvée dans la feuille :")
+            for m in missed:
+                print(f"     {m}")
+
+    if not rows1 and not rows2:
+        print("\nAucun fichier CSV de résultats trouvé — rien à exporter.")
+        print(f"Vérifiez qu'ils existent bien dans : {OUTPUT_DIR}")
+        return
+
+    if total_written == 0:
+        print("\n*** ATTENTION : AUCUNE ligne n'a été écrite dans le classeur. ***")
+        print("Le fichier a été rouvert et réenregistré à l'identique — rien n'a changé.")
+        print("Cause probable : les positions/côtés/répétitions du CSV ne correspondent pas")
+        print("exactement à ceux du classeur (matrice de test modifiée entre-temps ?).")
+        return
 
     wb.save(xlsx_path)
-    print(f"\nClasseur mis à jour : {os.path.abspath(xlsx_path)}")
+    print(f"\n{total_written} ligne(s) écrite(s) au total. Classeur mis à jour : {os.path.abspath(xlsx_path)}")
+    if total_missed:
+        print(f"({len(total_missed)} ligne(s) n'ont PAS pu être placées — voir le détail ci-dessus.)")
     print("Ouvrez-le dans Excel : les formules se recalculent automatiquement.")
 
 
