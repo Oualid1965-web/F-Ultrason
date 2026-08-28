@@ -1,0 +1,33 @@
+name: Construire UltrasonApp.exe
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v4
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Installer les dependances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Construire l'executable
+        run: >
+          pyinstaller --onefile --windowed --name "UltrasonApp"
+          --collect-all scipy
+          --collect-all sklearn
+          --collect-all matplotlib
+          --hidden-import nidaqmx
+          main.py
+      - name: Publier le .exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: UltrasonApp-exe
+          path: dist/UltrasonApp.exe
