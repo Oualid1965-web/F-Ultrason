@@ -33,6 +33,7 @@ jobs:
           --collect-all scipy
           --collect-all sklearn
           --collect-all nidaqmx
+          --collect-all nitypes
           --hidden-import openpyxl
           etude_position_capteurs.py
       - name: Publier le .exe de l'etude
