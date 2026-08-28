@@ -32,7 +32,8 @@ jobs:
           pyinstaller --onefile --console --name "EtudePositionCapteurs"
           --collect-all scipy
           --collect-all sklearn
-          --hidden-import nidaqmx
+          --collect-all nidaqmx
+          --collect-all nitypes
           --hidden-import openpyxl
           etude_position_capteurs.py
       - name: Publier le .exe de l'etude
