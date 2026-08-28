@@ -48,8 +48,12 @@ PHASE2_POSITIONS_PO = [3.94, 4.72, 5.12, 5.51, 5.91, 6.30]
 SIDES = ["Gauche", "Droit"]
 REPS = [1, 2, 3]
 
-PHASE1_CSV = "collecte_phase1_tubes_sains.csv"
-PHASE2_CSV = "collecte_phase2_defaut_connu.csv"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+OUTPUT_DIR = os.path.join(SCRIPT_DIR, "resultats_etude")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+PHASE1_CSV = os.path.join(OUTPUT_DIR, "collecte_phase1_tubes_sains.csv")
+PHASE2_CSV = os.path.join(OUTPUT_DIR, "collecte_phase2_defaut_connu.csv")
 
 PHASE1_HEADER = [
     "ID_essai", "Date", "Operateur", "N_tube", "Longueur_tube_po",
@@ -57,6 +61,7 @@ PHASE1_HEADER = [
     "SNR_acquisition_dB", "Health_Index", "Correlation_pct",
     "Defauts_P5_P95", "Ratio_Defauts_pct", "MAE", "Zmax", "Energie_ratio",
     "Statut_Base_Saine", "Probabilite_IA", "Diagnostic_IA", "Statut_Final",
+    "Amplitude_FFT_max",
 ]
 PHASE2_HEADER = [
     "ID_essai", "Date", "Operateur", "N_tube", "Longueur_tube_po",
@@ -64,7 +69,7 @@ PHASE2_HEADER = [
     "SNR_acquisition_dB", "Health_Index", "Correlation_pct",
     "Defauts_P5_P95", "Ratio_Defauts_pct", "MAE", "Zmax", "Energie_ratio",
     "Statut_Base_Saine", "Probabilite_IA", "Diagnostic_IA", "Statut_Final",
-    "Defaut_Detecte",
+    "Defaut_Detecte", "Amplitude_FFT_max",
 ]
 
 
@@ -148,16 +153,40 @@ def acquire_one_tube(cfg, mode):
         snr_acq = spmod.compute_snr(DATA, daq.n_samples_r)
         return tube_df, snr_acq
     else:
-        path = ask("Chemin du fichier CSV du tube (exporté par l'app)")
-        df = pd.read_csv(path, sep=";")
-        df.columns = df.columns.astype(str).str.strip()
-        return df, None
+        while True:
+            path = ask("Chemin du fichier CSV du tube (exporté par l'app)")
+            if not path:
+                print("  -> chemin vide, réessayez.")
+                continue
+            path = path.strip().strip('"').strip("'")
+            if not os.path.exists(path):
+                print(f"  -> fichier introuvable : {path}")
+                print("     (vérifiez le chemin complet, ex. C:\\dossier\\tube.csv)")
+                continue
+            try:
+                df = pd.read_csv(path, sep=";")
+                df.columns = df.columns.astype(str).str.strip()
+                if "FREQ" not in df.columns or cfg["PARAMETRE"] not in df.columns:
+                    print(f"  -> colonnes trouvées : {list(df.columns)}")
+                    print(f"     attendu : 'FREQ' et '{cfg['PARAMETRE']}' — fichier incompatible.")
+                    continue
+                return df, None
+            except Exception as e:
+                print(f"  -> erreur de lecture du fichier : {e}")
+                continue
 
 
 def evaluate_current(cfg, df_ref, tube_df):
     FREQ_R = tube_df["FREQ"].values
     ev = tcmod.evaluate_tube(FREQ_R, tube_df[cfg["PARAMETRE"]].values, df_ref, cfg)
     return ev
+
+
+def amplitude_fft_max(tube_df):
+    """Amplitude brute max du spectre FFT — indicateur physique complémentaire au
+    Health Index, calculé à partir des mêmes données déjà acquises (aucun capteur
+    ni mesure supplémentaire nécessaire)."""
+    return round(float(tube_df["FFT Abs"].max()), 4)
 
 
 def print_eval_summary(ev, snr_acq):
@@ -187,6 +216,7 @@ def run_phase1(cfg, df_ref, operateur, mode):
                 longueur = ask_float("  Longueur du tube (po)")
                 tube_df, snr_acq = acquire_one_tube(cfg, mode)
                 ev = evaluate_current(cfg, df_ref, tube_df)
+                amp_max = amplitude_fft_max(tube_df)
                 print_eval_summary(ev, snr_acq)
                 row = {
                     "ID_essai": essai_id,
@@ -209,6 +239,7 @@ def run_phase1(cfg, df_ref, operateur, mode):
                     "Probabilite_IA": ev["probabilite_ia"],
                     "Diagnostic_IA": ev["diagnostic_ia"],
                     "Statut_Final": ev["statut_final"],
+                    "Amplitude_FFT_max": amp_max,
                 }
                 append_row(PHASE1_CSV, PHASE1_HEADER, row)
                 essai_id += 1
@@ -235,6 +266,7 @@ def run_phase2(cfg, df_ref, operateur, mode):
                 pos_reelle = ask_float("  Position réelle du défaut (po)", pos)
                 tube_df, snr_acq = acquire_one_tube(cfg, mode)
                 ev = evaluate_current(cfg, df_ref, tube_df)
+                amp_max = amplitude_fft_max(tube_df)
                 print_eval_summary(ev, snr_acq)
                 detecte = "Oui" if ev["statut_final"] != "ACCEPTE" else "Non"
                 print(f"  -> Défaut détecté (déduit du statut) : {detecte}")
@@ -261,14 +293,113 @@ def run_phase2(cfg, df_ref, operateur, mode):
                     "Diagnostic_IA": ev["diagnostic_ia"],
                     "Statut_Final": ev["statut_final"],
                     "Defaut_Detecte": detecte,
+                    "Amplitude_FFT_max": amp_max,
                 }
                 append_row(PHASE2_CSV, PHASE2_HEADER, row)
                 essai_id += 1
     print(f"\nPhase 2 terminée. Résultats dans {PHASE2_CSV}")
 
 
+def export_to_excel():
+    try:
+        import openpyxl
+    except ImportError:
+        print("openpyxl est requis pour l'export. Installez-le avec :")
+        print("  pip install openpyxl")
+        return
+
+    print("\n=== Export des résultats collectés vers le classeur Excel ===\n")
+    xlsx_path = ask("Chemin du classeur Excel (Etude_longueur_position_capteurs.xlsx)")
+    if not xlsx_path or not os.path.exists(xlsx_path):
+        print("Fichier introuvable.")
+        return
+
+    field_to_col_1 = {
+        "Date": 2, "Operateur": 3, "N_tube": 4, "Longueur_tube_po": 5,
+        "SNR_acquisition_dB": 9, "Health_Index": 10, "Correlation_pct": 11,
+        "Defauts_P5_P95": 12, "Ratio_Defauts_pct": 13, "MAE": 14, "Zmax": 15,
+        "Energie_ratio": 16, "Statut_Base_Saine": 17, "Amplitude_FFT_max": 19,
+    }
+    match_cols_1 = {"Cote": 6, "Position_capteur_po": 7, "Repetition": 8}
+
+    field_to_col_2 = {
+        "Date": 2, "Operateur": 3, "N_tube": 4, "Longueur_tube_po": 5,
+        "Position_reelle_defaut_po": 8,
+        "SNR_acquisition_dB": 10, "Health_Index": 11, "Correlation_pct": 12,
+        "Defauts_P5_P95": 13, "Ratio_Defauts_pct": 14, "MAE": 15, "Zmax": 16,
+        "Energie_ratio": 17, "Statut_Base_Saine": 18, "Statut_Final": 19,
+        "Amplitude_FFT_max": 23,
+    }
+    match_cols_2 = {"Cote": 6, "Position_capteur_testee_po": 7, "Repetition": 9}
+
+    def to_float(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    def row_matches(ws, cell_row, match_cols, csv_row):
+        for field, col in match_cols.items():
+            cell_val = ws.cell(row=cell_row, column=col).value
+            csv_val = csv_row.get(field)
+            if field.startswith("Position") or field == "Repetition":
+                cv, xv = to_float(csv_val), to_float(cell_val)
+                if cv is None or xv is None or abs(cv - xv) > 1e-6:
+                    return False
+            elif str(cell_val).strip() != str(csv_val).strip():
+                return False
+        return True
+
+    def write_sheet(ws, csv_rows, field_to_col, match_cols):
+        written, not_found = 0, []
+        max_row = ws.max_row
+        for csv_row in csv_rows:
+            found = False
+            for r in range(4, max_row + 1):
+                if row_matches(ws, r, match_cols, csv_row):
+                    for field, col in field_to_col.items():
+                        val = csv_row.get(field)
+                        fv = to_float(val)
+                        ws.cell(row=r, column=col, value=fv if fv is not None else (val or None))
+                    written += 1
+                    found = True
+                    break
+            if not found:
+                not_found.append({k: csv_row.get(k) for k in match_cols})
+        return written, not_found
+
+    wb = openpyxl.load_workbook(xlsx_path)
+
+    rows1 = list(csv.DictReader(open(PHASE1_CSV, encoding="utf-8"))) if os.path.exists(PHASE1_CSV) else []
+    if rows1:
+        n, missed = write_sheet(wb["Collecte - Tubes sains"], rows1, field_to_col_1, match_cols_1)
+        print(f"Phase 1 : {n}/{len(rows1)} lignes écrites.")
+        if missed:
+            print(f"  {len(missed)} ligne(s) sans correspondance : {missed}")
+
+    rows2 = list(csv.DictReader(open(PHASE2_CSV, encoding="utf-8"))) if os.path.exists(PHASE2_CSV) else []
+    if rows2:
+        n, missed = write_sheet(wb["Collecte - Défaut connu"], rows2, field_to_col_2, match_cols_2)
+        print(f"Phase 2 : {n}/{len(rows2)} lignes écrites.")
+        if missed:
+            print(f"  {len(missed)} ligne(s) sans correspondance : {missed}")
+
+    wb.save(xlsx_path)
+    print(f"\nClasseur mis à jour : {os.path.abspath(xlsx_path)}")
+    print("Ouvrez-le dans Excel : les formules se recalculent automatiquement.")
+
+
 def main():
     print("=== Étude position des capteurs / longueur de tube ===")
+    print(f"Les résultats seront écrits dans : {OUTPUT_DIR}\n")
+    print("1. Lancer une session de collecte (acquisition + évaluation)")
+    print("2. Exporter les résultats collectés vers le classeur Excel")
+    choice = ask("Choix", "1")
+
+    if choice == "2":
+        export_to_excel()
+        return
+
     cfg = cfgmod.load_config()
     operateur = ask("Nom de l'opérateur")
     meta, df_ref = pick_reference_base(cfg)
@@ -290,9 +421,8 @@ def main():
     if phase in ("2", "3"):
         run_phase2(cfg, df_ref, operateur, mode)
 
-    print("\nTerminé. Ouvrez les fichiers CSV générés et collez leur contenu dans les")
-    print("feuilles \"Collecte - ...\" du classeur Etude_longueur_position_capteurs.xlsx")
-    print("(les colonnes sont dans le même ordre).")
+    print("\nTerminé. Relancez ce programme et choisissez l'option 2 pour exporter")
+    print("ces résultats vers le classeur Excel de l'étude.")
 
 
 if __name__ == "__main__":
@@ -300,3 +430,8 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         print("\nInterrompu. Relancez le script pour reprendre là où vous vous êtes arrêté.")
+    except Exception:
+        import traceback
+        print("\n=== Une erreur inattendue est survenue ===")
+        traceback.print_exc()
+        input("\nAppuyez sur Entrée pour fermer...")
