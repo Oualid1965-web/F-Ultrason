@@ -1,0 +1,42 @@
+name: Construire EtudePositionCapteurs.exe
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'etude_position_capteurs.py'
+      - 'config.py'
+      - 'daq_acquisition.py'
+      - 'signal_processing.py'
+      - 'tube_comparator.py'
+      - 'reference_base_builder.py'
+      - 'requirements.txt'
+      - '.github/workflows/build-etude-position.yml'
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Recuperer le code
+        uses: actions/checkout@v4
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Installer les dependances
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Construire l'executable de l'etude (position capteurs)
+        run: >
+          pyinstaller --onefile --console --name "EtudePositionCapteurs"
+          --collect-all scipy
+          --collect-all sklearn
+          --collect-all nidaqmx
+          --hidden-import openpyxl
+          etude_position_capteurs.py
+      - name: Publier le .exe de l'etude
+        uses: actions/upload-artifact@v4
+        with:
+          name: EtudePositionCapteurs-exe
+          path: dist/EtudePositionCapteurs.exe
