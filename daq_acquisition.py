@@ -10,8 +10,10 @@ try:
     import nidaqmx
     from nidaqmx.constants import AcquisitionType, TerminalConfiguration
     NIDAQ_AVAILABLE = True
-except Exception:
+    NIDAQ_IMPORT_ERROR = None
+except Exception as _e:
     NIDAQ_AVAILABLE = False
+    NIDAQ_IMPORT_ERROR = f"{type(_e).__name__}: {_e}"
 
 
 class DaqController:
@@ -39,6 +41,8 @@ class DaqController:
 
         if not NIDAQ_AVAILABLE:
             print("nidaqmx non disponible : mode simulation activé.")
+            if NIDAQ_IMPORT_ERROR:
+                print(f"  Détail : {NIDAQ_IMPORT_ERROR}")
             self.ai_task = None
             self.ao_task = None
             self.n_samples_r = int(T_SWEEP * FS_R)
