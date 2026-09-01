@@ -36,6 +36,8 @@ class TestFrame(tk.Frame):
                   ).pack(side="right", padx=5)
         tk.Button(header, text="Changer de base", command=lambda: controller.show_frame("SelectBaseFrame")
                   ).pack(side="right", padx=5)
+        tk.Button(header, text="📏 Tests de position des capteurs",
+                  command=self.go_position_tests).pack(side="right", padx=5)
 
         self.ia_label = tk.Label(self, text="IA : -", font=("Segoe UI", 9), fg="#555555")
         self.ia_label.pack(anchor="w", padx=18)
@@ -167,6 +169,9 @@ class TestFrame(tk.Frame):
         self.export_btn.config(state="normal")
         self.archive_sain_btn.config(state="normal")
         self.archive_defaut_btn.config(state="normal")
+
+    def go_position_tests(self):
+        self.controller.show_frame("PositionTestFrame")
 
     def new_test_daq(self):
         st = self.controller.state_data
