@@ -1,4 +1,5 @@
 import os
+import time
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 
@@ -262,16 +263,27 @@ class PositionTestFrame(tk.Frame):
         raw_g = self._acquire_raw("Gauche")
         if raw_g is None:
             return
+        # Petite pause pour laisser le matériel NI-DAQ libérer complètement le canal
+        # avant d'en ouvrir un nouveau — évite un échec silencieux du 2e capteur.
+        self.update_idletasks()
+        time.sleep(0.4)
         raw_d = self._acquire_raw("Droit")
         if raw_d is None:
             return
 
-        # Journalisation individuelle (silencieuse) — nécessaire pour l'import Excel.
-        self._log_row("Gauche", position_cm, name, raw_g, tube_type, pos_defaut_cm)
-        self._log_row("Droit", position_cm, name, raw_d, tube_type, pos_defaut_cm)
+        try:
+            # Journalisation individuelle (silencieuse) — nécessaire pour l'import Excel.
+            self._log_row("Gauche", position_cm, name, raw_g, tube_type, pos_defaut_cm)
+            self._log_row("Droit", position_cm, name, raw_d, tube_type, pos_defaut_cm)
 
-        # Affichage combiné (une seule valeur, comme un test normal).
-        self._show_combined(position_cm, name, raw_g, raw_d)
+            # Affichage combiné (une seule valeur, comme un test normal).
+            self._show_combined(position_cm, name, raw_g, raw_d)
+        except Exception as e:
+            messagebox.showerror(
+                "Erreur après acquisition",
+                f"L'acquisition des deux côtés a réussi, mais une erreur est survenue "
+                f"en traitant/affichant le résultat combiné :\n{e}"
+            )
 
     def _acquire_raw(self, side):
         """Fait UNE acquisition + évaluation (sans affichage ni journalisation).
