@@ -5,6 +5,7 @@ from .home_frame import HomeFrame
 from .select_base_frame import SelectBaseFrame
 from .create_base_frame import CreateBaseFrame
 from .test_frame import TestFrame
+from .position_test_frame import PositionTestFrame
 from .settings_frame import SettingsFrame
 
 
@@ -33,7 +34,7 @@ class UltrasonApp(tk.Tk):
         container.grid_columnconfigure(0, weight=1)
 
         self.frames = {}
-        for F in (HomeFrame, SelectBaseFrame, CreateBaseFrame, TestFrame, SettingsFrame):
+        for F in (HomeFrame, SelectBaseFrame, CreateBaseFrame, TestFrame, PositionTestFrame, SettingsFrame):
             frame = F(container, self)
             self.frames[F.__name__] = frame
             frame.grid(row=0, column=0, sticky="nsew")
