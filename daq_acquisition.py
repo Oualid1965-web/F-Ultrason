@@ -105,6 +105,15 @@ class DaqController:
 
         except nidaqmx.DaqError as e:
             print(f"Erreur DAQ : {e}")
+            # Fermer les tâches déjà créées avant de les abandonner, sinon le canal
+            # (partagé entre Gauche et Droit pour l'excitation AO) reste réservé et
+            # bloque silencieusement l'acquisition suivante.
+            for t in (locals().get("ai_task"), locals().get("ao_task")):
+                if t is not None:
+                    try:
+                        t.close()
+                    except Exception:
+                        pass
             self.ai_task = None
             self.ao_task = None
             self.simulated = True
@@ -124,18 +133,29 @@ class DaqController:
         else:
             acquired = np.zeros(n)
             n_avg = 0
-            while n_avg < averages:
-                self.ao_task.start()
-                self.ai_task.start()
-                acquired += np.array(self.ai_task.read(number_of_samples_per_channel=n)) / averages
-                print(f"Moyennes : {n_avg + 1}/{averages}", end="\r")
-                self.ai_task.stop()
-                self.ao_task.stop()
-                n_avg += 1
-            self.ai_task.close()
-            self.ao_task.close()
-            self.ai_task = None
-            self.ao_task = None
+            try:
+                while n_avg < averages:
+                    self.ao_task.start()
+                    self.ai_task.start()
+                    acquired += np.array(self.ai_task.read(number_of_samples_per_channel=n)) / averages
+                    print(f"Moyennes : {n_avg + 1}/{averages}", end="\r")
+                    self.ai_task.stop()
+                    self.ao_task.stop()
+                    n_avg += 1
+            finally:
+                # Toujours libérer le matériel, même si une erreur survient pendant
+                # l'acquisition — sinon l'acquisition suivante (ex. l'autre capteur)
+                # échoue silencieusement car le canal reste réservé.
+                try:
+                    self.ai_task.close()
+                except Exception:
+                    pass
+                try:
+                    self.ao_task.close()
+                except Exception:
+                    pass
+                self.ai_task = None
+                self.ao_task = None
 
         DATA = acquired - np.mean(acquired[int(n / 2 * 1.1):])
         print("\nAcquisition terminée.")
