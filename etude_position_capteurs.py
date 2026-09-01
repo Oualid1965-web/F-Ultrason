@@ -141,16 +141,23 @@ def pick_reference_base(cfg):
         print("  -> choix invalide, réessayez.")
 
 
-def acquire_one_tube(cfg, mode):
+SIDE_TO_CHANNEL = {"Gauche": "ai0", "Droit": "ai1"}
+
+
+def acquire_one_tube(cfg, mode, side=None):
     """Retourne (DATA, fs_r, n_samples_r, tube_df, snr_acq) pour un tube.
     mode = 'daq' (acquisition via daq_acquisition, réelle ou simulée si NI-DAQ absent)
     mode = 'csv' (import d'un fichier déjà exporté par l'app, colonnes FREQ;FFT Real;FFT Imag;FFT Abs)
+    side = 'Gauche' ou 'Droit' — détermine quel canal AI est lu (ai0/ai1), sans effet en mode csv.
     """
     if mode == "daq":
-        daq = daqmod.DaqController(cfg)
+        ai_channel = SIDE_TO_CHANNEL.get(side, "ai0")
+        daq = daqmod.DaqController(cfg, ai_channel=ai_channel)
         real = daq.init_daq()
         if not real:
             print("  (mode simulation — NI-DAQ non détecté, données aléatoires générées)")
+        else:
+            print(f"  (acquisition sur {ai_channel} — capteur {side})")
         DATA = daq.acquire()
         FREQ_R, FFT_SIGNAL = spmod.compute_fft(
             DATA, daq.fs_r_actual, cfg["F_MIN_FFT"], cfg["F_MAX_FFT"], cfg["N_POINTS_FFT"]
@@ -220,7 +227,7 @@ def run_phase1(cfg, df_ref, operateur, mode):
                 input("  Positionnez le capteur, puis appuyez sur Entrée pour continuer...")
                 n_tube = ask("  N° tube")
                 longueur = ask_float("  Longueur du tube (po)")
-                tube_df, snr_acq = acquire_one_tube(cfg, mode)
+                tube_df, snr_acq = acquire_one_tube(cfg, mode, side=side)
                 ev = evaluate_current(cfg, df_ref, tube_df)
                 amp_max = amplitude_fft_max(tube_df)
                 print_eval_summary(ev, snr_acq)
@@ -270,7 +277,7 @@ def run_phase2(cfg, df_ref, operateur, mode):
                 n_tube = ask("  N° tube")
                 longueur = ask_float("  Longueur du tube (po)")
                 pos_reelle = ask_float("  Position réelle du défaut (po)", pos)
-                tube_df, snr_acq = acquire_one_tube(cfg, mode)
+                tube_df, snr_acq = acquire_one_tube(cfg, mode, side=side)
                 ev = evaluate_current(cfg, df_ref, tube_df)
                 amp_max = amplitude_fft_max(tube_df)
                 print_eval_summary(ev, snr_acq)
@@ -306,6 +313,167 @@ def run_phase2(cfg, df_ref, operateur, mode):
     print(f"\nPhase 2 terminée. Résultats dans {PHASE2_CSV}")
 
 
+FIELD_TO_COL_PHASE1 = {
+    "Date": 2, "Operateur": 3, "N_tube": 4, "Longueur_tube_po": 5,
+    "SNR_acquisition_dB": 9, "Health_Index": 10, "Correlation_pct": 11,
+    "Defauts_P5_P95": 12, "Ratio_Defauts_pct": 13, "MAE": 14, "Zmax": 15,
+    "Energie_ratio": 16, "Statut_Base_Saine": 17, "Amplitude_FFT_max": 19,
+}
+MATCH_COLS_PHASE1 = {"Cote": 6, "Position_capteur_po": 7, "Repetition": 8}
+
+FIELD_TO_COL_PHASE2 = {
+    "Date": 2, "Operateur": 3, "N_tube": 4, "Longueur_tube_po": 5,
+    "Position_reelle_defaut_po": 8,
+    "SNR_acquisition_dB": 10, "Health_Index": 11, "Correlation_pct": 12,
+    "Defauts_P5_P95": 13, "Ratio_Defauts_pct": 14, "MAE": 15, "Zmax": 16,
+    "Energie_ratio": 17, "Statut_Base_Saine": 18, "Statut_Final": 19,
+    "Amplitude_FFT_max": 23,
+}
+MATCH_COLS_PHASE2 = {"Cote": 6, "Position_capteur_testee_po": 7, "Repetition": 9}
+
+# Correspondance cm (UltrasonApp, tests de position) -> po (classeur d'étude), sur
+# la grille de positions déjà utilisée en phase 1.
+CM_TO_PO = dict(zip([0, 2, 4, 6, 8, 10, 12, 14, 16], PHASE1_POSITIONS_PO))
+
+
+def _to_float(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _row_matches(ws, cell_row, match_cols, csv_row):
+    for field, col in match_cols.items():
+        cell_val = ws.cell(row=cell_row, column=col).value
+        csv_val = csv_row.get(field)
+        if field.startswith("Position") or field == "Repetition":
+            cv, xv = _to_float(csv_val), _to_float(cell_val)
+            if cv is None or xv is None or abs(cv - xv) > 1e-6:
+                return False
+        elif str(cell_val).strip() != str(csv_val).strip():
+            return False
+    return True
+
+
+def _write_sheet(ws, csv_rows, field_to_col, match_cols):
+    written, not_found = 0, []
+    max_row = ws.max_row
+    for csv_row in csv_rows:
+        found = False
+        for r in range(4, max_row + 1):
+            if _row_matches(ws, r, match_cols, csv_row):
+                for field, col in field_to_col.items():
+                    val = csv_row.get(field)
+                    fv = _to_float(val)
+                    ws.cell(row=r, column=col, value=fv if fv is not None else (val or None))
+                written += 1
+                found = True
+                break
+        if not found:
+            not_found.append({k: csv_row.get(k) for k in match_cols})
+    return written, not_found
+
+
+def import_ultrasonapp_position_csv():
+    try:
+        import openpyxl
+    except ImportError:
+        print("openpyxl est requis pour l'export. Installez-le avec :")
+        print("  pip install openpyxl")
+        return
+
+    print("\n=== Import des tests de position (UltrasonApp) vers le classeur Excel ===\n")
+    print("Ce fichier se trouve dans le dossier de votre base de référence,")
+    print("nommé resultats_tests_position.csv (créé par le bouton "
+          "\"📏 Tests de position des capteurs\").\n")
+    while True:
+        csv_path = ask("Chemin de resultats_tests_position.csv")
+        if not csv_path:
+            print("Chemin vide, réessayez.")
+            continue
+        csv_path = csv_path.strip().strip('"').strip("'")
+        if not os.path.exists(csv_path):
+            print(f"Fichier introuvable : {csv_path}")
+            continue
+        break
+    while True:
+        xlsx_path = ask("Chemin du classeur Excel (Etude_longueur_position_capteurs.xlsx)")
+        if not xlsx_path:
+            print("Chemin vide, réessayez.")
+            continue
+        xlsx_path = xlsx_path.strip().strip('"').strip("'")
+        if not os.path.exists(xlsx_path):
+            print(f"Fichier introuvable : {xlsx_path}")
+            continue
+        break
+    operateur = ask("Nom de l'opérateur (à appliquer à toutes les lignes)")
+
+    raw_rows = list(csv.DictReader(open(csv_path, encoding="utf-8")))
+    if not raw_rows:
+        print("Le fichier CSV est vide — rien à importer.")
+        return
+
+    # Traduit les colonnes UltrasonApp (cm, %, sans répétition ni ID) vers le
+    # format attendu par la feuille "Collecte - Tubes sains" (po, avec répétition).
+    rep_counters = {}
+    converted_rows = []
+    skipped_position = []
+    for r in raw_rows:
+        pos_cm = _to_float(r.get("Position_cm"))
+        pos_po = CM_TO_PO.get(int(pos_cm)) if pos_cm is not None and pos_cm == int(pos_cm) else None
+        if pos_po is None:
+            skipped_position.append(r.get("Position_cm"))
+            continue
+        cote = r.get("Cote")
+        key = (cote, pos_po)
+        rep_counters[key] = rep_counters.get(key, 0) + 1
+        converted_rows.append({
+            "Date": r.get("date"),
+            "Operateur": operateur,
+            "N_tube": r.get("fichier"),
+            "Longueur_tube_po": "",
+            "Cote": cote,
+            "Position_capteur_po": pos_po,
+            "Repetition": rep_counters[key],
+            "SNR_acquisition_dB": r.get("SNR_acquisition_dB"),
+            "Health_Index": r.get("Health_Index"),
+            "Correlation_pct": r.get("Correlation_%"),
+            "Defauts_P5_P95": r.get("Defauts_P5_P95"),
+            "Ratio_Defauts_pct": r.get("Ratio_Defauts_%"),
+            "MAE": r.get("MAE"),
+            "Zmax": r.get("Zmax"),
+            "Energie_ratio": r.get("Energie_ratio"),
+            "Statut_Base_Saine": r.get("Statut_Base_Saine"),
+            "Amplitude_FFT_max": r.get("Amplitude_FFT_max"),
+        })
+
+    if skipped_position:
+        print(f"{len(skipped_position)} ligne(s) ignorée(s) — position en cm non reconnue "
+              f"(hors grille 0/2/4/.../16) : {skipped_position}")
+    if not converted_rows:
+        print("Aucune ligne valide à importer.")
+        return
+
+    wb = openpyxl.load_workbook(xlsx_path)
+    n, missed = _write_sheet(wb["Collecte - Tubes sains"], converted_rows, FIELD_TO_COL_PHASE1, MATCH_COLS_PHASE1)
+    print(f"{n}/{len(converted_rows)} lignes écrites dans \"Collecte - Tubes sains\".")
+    if missed:
+        print(f"  -> {len(missed)} ligne(s) SANS correspondance trouvée dans la feuille :")
+        for m in missed:
+            print(f"     {m}")
+
+    if n == 0:
+        print("\n*** ATTENTION : AUCUNE ligne n'a été écrite. Fichier non modifié. ***")
+        return
+
+    wb.save(xlsx_path)
+    print(f"\n{n} ligne(s) écrite(s). Classeur mis à jour : {os.path.abspath(xlsx_path)}")
+    print("Ouvrez-le dans Excel : les formules se recalculent automatiquement.")
+    print("Rappel : la longueur du tube (po) n'est pas fournie par UltrasonApp — "
+          "complétez-la manuellement dans le classeur si besoin.")
+
+
 def export_to_excel():
     try:
         import openpyxl
@@ -326,59 +494,12 @@ def export_to_excel():
             continue
         break
 
-    field_to_col_1 = {
-        "Date": 2, "Operateur": 3, "N_tube": 4, "Longueur_tube_po": 5,
-        "SNR_acquisition_dB": 9, "Health_Index": 10, "Correlation_pct": 11,
-        "Defauts_P5_P95": 12, "Ratio_Defauts_pct": 13, "MAE": 14, "Zmax": 15,
-        "Energie_ratio": 16, "Statut_Base_Saine": 17, "Amplitude_FFT_max": 19,
-    }
-    match_cols_1 = {"Cote": 6, "Position_capteur_po": 7, "Repetition": 8}
-
-    field_to_col_2 = {
-        "Date": 2, "Operateur": 3, "N_tube": 4, "Longueur_tube_po": 5,
-        "Position_reelle_defaut_po": 8,
-        "SNR_acquisition_dB": 10, "Health_Index": 11, "Correlation_pct": 12,
-        "Defauts_P5_P95": 13, "Ratio_Defauts_pct": 14, "MAE": 15, "Zmax": 16,
-        "Energie_ratio": 17, "Statut_Base_Saine": 18, "Statut_Final": 19,
-        "Amplitude_FFT_max": 23,
-    }
-    match_cols_2 = {"Cote": 6, "Position_capteur_testee_po": 7, "Repetition": 9}
-
-    def to_float(v):
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return None
-
-    def row_matches(ws, cell_row, match_cols, csv_row):
-        for field, col in match_cols.items():
-            cell_val = ws.cell(row=cell_row, column=col).value
-            csv_val = csv_row.get(field)
-            if field.startswith("Position") or field == "Repetition":
-                cv, xv = to_float(csv_val), to_float(cell_val)
-                if cv is None or xv is None or abs(cv - xv) > 1e-6:
-                    return False
-            elif str(cell_val).strip() != str(csv_val).strip():
-                return False
-        return True
-
-    def write_sheet(ws, csv_rows, field_to_col, match_cols):
-        written, not_found = 0, []
-        max_row = ws.max_row
-        for csv_row in csv_rows:
-            found = False
-            for r in range(4, max_row + 1):
-                if row_matches(ws, r, match_cols, csv_row):
-                    for field, col in field_to_col.items():
-                        val = csv_row.get(field)
-                        fv = to_float(val)
-                        ws.cell(row=r, column=col, value=fv if fv is not None else (val or None))
-                    written += 1
-                    found = True
-                    break
-            if not found:
-                not_found.append({k: csv_row.get(k) for k in match_cols})
-        return written, not_found
+    field_to_col_1 = FIELD_TO_COL_PHASE1
+    match_cols_1 = MATCH_COLS_PHASE1
+    field_to_col_2 = FIELD_TO_COL_PHASE2
+    match_cols_2 = MATCH_COLS_PHASE2
+    to_float = _to_float
+    write_sheet = _write_sheet
 
     wb = openpyxl.load_workbook(xlsx_path)
     total_written = 0
@@ -429,11 +550,15 @@ def main():
     print("=== Étude position des capteurs / longueur de tube ===")
     print(f"Les résultats seront écrits dans : {OUTPUT_DIR}\n")
     print("1. Lancer une session de collecte (acquisition + évaluation)")
-    print("2. Exporter les résultats collectés vers le classeur Excel")
+    print("2. Exporter les résultats collectés (ce programme) vers le classeur Excel")
+    print("3. Importer les tests de position faits dans UltrasonApp vers le classeur Excel")
     choice = ask("Choix", "1")
 
     if choice == "2":
         export_to_excel()
+        return
+    if choice == "3":
+        import_ultrasonapp_position_csv()
         return
 
     cfg = cfgmod.load_config()

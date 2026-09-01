@@ -3,6 +3,7 @@ pandas
 scipy
 matplotlib
 nidaqmx
+nitypes
 joblib
 scikit-learn
 openpyxl

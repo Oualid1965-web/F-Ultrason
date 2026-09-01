@@ -87,3 +87,35 @@ def append_result_csv(results_csv_path, tube_name, eval_result, snr_acquisition)
     else:
         df_row.to_csv(results_csv_path, mode="w", header=True, index=False)
     return row
+
+
+def append_position_result_csv(results_csv_path, tube_name, position_cm, cote, eval_result, snr_acquisition,
+                                amplitude_fft_max=None):
+    """Identique à append_result_csv, avec Position_cm et Cote en plus — utilisé par
+    les tests de position des capteurs. Les autres colonnes ont exactement les mêmes
+    seuils/caractéristiques que les tests normaux (même cfg, même evaluate_tube)."""
+    row = {
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "fichier": tube_name,
+        "Position_cm": position_cm,
+        "Cote": cote,
+        "SNR_acquisition_dB": None if snr_acquisition is None or np.isnan(snr_acquisition) else round(float(snr_acquisition), 2),
+        "Health_Index": eval_result["health_index"],
+        "Correlation_%": eval_result["correlation"],
+        "Defauts_P5_P95": eval_result["nb_defauts"],
+        "Ratio_Defauts_%": eval_result["ratio_defauts"],
+        "MAE": eval_result["mae"],
+        "Zmax": eval_result["zmax"],
+        "Energie_ratio": eval_result["energie_ratio"],
+        "Statut_Base_Saine": eval_result["statut_base"],
+        "Probabilite_IA": eval_result["probabilite_ia"],
+        "Diagnostic_IA": eval_result["diagnostic_ia"],
+        "Statut_Final": eval_result["statut_final"],
+        "Amplitude_FFT_max": amplitude_fft_max,
+    }
+    df_row = pd.DataFrame([row])
+    if os.path.exists(results_csv_path):
+        df_row.to_csv(results_csv_path, mode="a", header=False, index=False)
+    else:
+        df_row.to_csv(results_csv_path, mode="w", header=True, index=False)
+    return row

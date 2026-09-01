@@ -19,8 +19,9 @@ except Exception as _e:
 class DaqController:
     """Gère l'initialisation des tâches AI/AO et l'acquisition moyennée."""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, ai_channel="ai0"):
         self.cfg = cfg
+        self.ai_channel = ai_channel
         self.ai_task = None
         self.ao_task = None
         self.n_samples_r = int(cfg["T_SWEEP"] * cfg["FS_R"])
@@ -49,7 +50,7 @@ class DaqController:
             self.simulated = True
             return False
 
-        AI_0 = f"{device_name}Mod1/ai0"
+        AI_0 = f"{device_name}Mod1/{self.ai_channel}"
         AO_0 = f"{device_name}Mod2/ao0"
         AO_1 = f"{device_name}Mod2/ao1"
 
