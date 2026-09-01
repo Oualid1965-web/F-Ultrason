@@ -3,6 +3,18 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
+    paths:
+      - 'main.py'
+      - 'gui/**'
+      - 'config.py'
+      - 'daq_acquisition.py'
+      - 'signal_processing.py'
+      - 'tube_comparator.py'
+      - 'reference_base_builder.py'
+      - 'report_generator.py'
+      - 'ia_model_manager.py'
+      - 'requirements.txt'
+      - '.github/workflows/build-ultrasonapp.yml'
 jobs:
   build:
     runs-on: windows-latest
