@@ -44,7 +44,7 @@ except ImportError:
 # Si vous changez les positions dans le classeur, changez-les ici à l'identique.
 # ---------------------------------------------------------------------------
 PHASE1_POSITIONS_PO = [0, 0.79, 1.57, 2.36, 3.15, 3.94, 4.72, 5.51, 6.30]
-PHASE2_POSITIONS_PO = [3.94, 4.72, 5.12, 5.51, 5.91, 6.30]
+PHASE2_POSITIONS_PO = list(PHASE1_POSITIONS_PO)  # même grille 0-16cm que la phase 1
 SIDES = ["Gauche", "Droit"]
 REPS = [1, 2, 3]
 
@@ -334,6 +334,8 @@ MATCH_COLS_PHASE2 = {"Cote": 6, "Position_capteur_testee_po": 7, "Repetition": 9
 # Correspondance cm (UltrasonApp, tests de position) -> po (classeur d'étude), sur
 # la grille de positions déjà utilisée en phase 1.
 CM_TO_PO = dict(zip([0, 2, 4, 6, 8, 10, 12, 14, 16], PHASE1_POSITIONS_PO))
+# Idem pour la grille phase 2 (tubes à défaut connu), désormais identique à la phase 1.
+CM_TO_PO_PHASE2 = dict(zip([0, 2, 4, 6, 8, 10, 12, 14, 16], PHASE2_POSITIONS_PO))
 
 
 def _to_float(v):
@@ -415,60 +417,114 @@ def import_ultrasonapp_position_csv():
         return
 
     # Traduit les colonnes UltrasonApp (cm, %, sans répétition ni ID) vers le
-    # format attendu par la feuille "Collecte - Tubes sains" (po, avec répétition).
-    rep_counters = {}
-    converted_rows = []
+    # format attendu par les feuilles "Collecte - ..." (po, avec répétition).
+    # Type == "Sain" -> feuille "Collecte - Tubes sains" (grille CM_TO_PO).
+    # Type == "Défaut" -> feuille "Collecte - Défaut connu" (grille CM_TO_PO_PHASE2).
+    rep_counters_1 = {}
+    rep_counters_2 = {}
+    rows_sain, rows_defaut = [], []
     skipped_position = []
     for r in raw_rows:
+        tube_type = (r.get("Type") or "Sain").strip()
         pos_cm = _to_float(r.get("Position_cm"))
-        pos_po = CM_TO_PO.get(int(pos_cm)) if pos_cm is not None and pos_cm == int(pos_cm) else None
-        if pos_po is None:
-            skipped_position.append(r.get("Position_cm"))
+        if pos_cm is None:
+            skipped_position.append((tube_type, r.get("Position_cm")))
             continue
-        cote = r.get("Cote")
-        key = (cote, pos_po)
-        rep_counters[key] = rep_counters.get(key, 0) + 1
-        converted_rows.append({
-            "Date": r.get("date"),
-            "Operateur": operateur,
-            "N_tube": r.get("fichier"),
-            "Longueur_tube_po": "",
-            "Cote": cote,
-            "Position_capteur_po": pos_po,
-            "Repetition": rep_counters[key],
-            "SNR_acquisition_dB": r.get("SNR_acquisition_dB"),
-            "Health_Index": r.get("Health_Index"),
-            "Correlation_pct": r.get("Correlation_%"),
-            "Defauts_P5_P95": r.get("Defauts_P5_P95"),
-            "Ratio_Defauts_pct": r.get("Ratio_Defauts_%"),
-            "MAE": r.get("MAE"),
-            "Zmax": r.get("Zmax"),
-            "Energie_ratio": r.get("Energie_ratio"),
-            "Statut_Base_Saine": r.get("Statut_Base_Saine"),
-            "Amplitude_FFT_max": r.get("Amplitude_FFT_max"),
-        })
+        pos_cm_int = int(pos_cm) if pos_cm == int(pos_cm) else None
+
+        if tube_type == "Défaut":
+            pos_po = CM_TO_PO_PHASE2.get(pos_cm_int) if pos_cm_int is not None else None
+            if pos_po is None:
+                skipped_position.append((tube_type, r.get("Position_cm")))
+                continue
+            cote = r.get("Cote")
+            key = (cote, pos_po)
+            rep_counters_2[key] = rep_counters_2.get(key, 0) + 1
+            pos_reelle_cm = _to_float(r.get("Position_reelle_defaut_cm"))
+            pos_reelle_po = round(pos_reelle_cm / 2.54, 2) if pos_reelle_cm is not None else pos_po
+            rows_defaut.append({
+                "Date": r.get("date"),
+                "Operateur": operateur,
+                "N_tube": r.get("fichier"),
+                "Longueur_tube_po": "",
+                "Cote": cote,
+                "Position_capteur_testee_po": pos_po,
+                "Position_reelle_defaut_po": pos_reelle_po,
+                "Repetition": rep_counters_2[key],
+                "SNR_acquisition_dB": r.get("SNR_acquisition_dB"),
+                "Health_Index": r.get("Health_Index"),
+                "Correlation_pct": r.get("Correlation_%"),
+                "Defauts_P5_P95": r.get("Defauts_P5_P95"),
+                "Ratio_Defauts_pct": r.get("Ratio_Defauts_%"),
+                "MAE": r.get("MAE"),
+                "Zmax": r.get("Zmax"),
+                "Energie_ratio": r.get("Energie_ratio"),
+                "Statut_Base_Saine": r.get("Statut_Base_Saine"),
+                "Statut_Final": r.get("Statut_Final"),
+                "Amplitude_FFT_max": r.get("Amplitude_FFT_max"),
+            })
+        else:
+            pos_po = CM_TO_PO.get(pos_cm_int) if pos_cm_int is not None else None
+            if pos_po is None:
+                skipped_position.append((tube_type, r.get("Position_cm")))
+                continue
+            cote = r.get("Cote")
+            key = (cote, pos_po)
+            rep_counters_1[key] = rep_counters_1.get(key, 0) + 1
+            rows_sain.append({
+                "Date": r.get("date"),
+                "Operateur": operateur,
+                "N_tube": r.get("fichier"),
+                "Longueur_tube_po": "",
+                "Cote": cote,
+                "Position_capteur_po": pos_po,
+                "Repetition": rep_counters_1[key],
+                "SNR_acquisition_dB": r.get("SNR_acquisition_dB"),
+                "Health_Index": r.get("Health_Index"),
+                "Correlation_pct": r.get("Correlation_%"),
+                "Defauts_P5_P95": r.get("Defauts_P5_P95"),
+                "Ratio_Defauts_pct": r.get("Ratio_Defauts_%"),
+                "MAE": r.get("MAE"),
+                "Zmax": r.get("Zmax"),
+                "Energie_ratio": r.get("Energie_ratio"),
+                "Statut_Base_Saine": r.get("Statut_Base_Saine"),
+                "Amplitude_FFT_max": r.get("Amplitude_FFT_max"),
+            })
 
     if skipped_position:
         print(f"{len(skipped_position)} ligne(s) ignorée(s) — position en cm non reconnue "
-              f"(hors grille 0/2/4/.../16) : {skipped_position}")
-    if not converted_rows:
+              f"pour ce type de tube : {skipped_position}")
+    if not rows_sain and not rows_defaut:
         print("Aucune ligne valide à importer.")
         return
 
     wb = openpyxl.load_workbook(xlsx_path)
-    n, missed = _write_sheet(wb["Collecte - Tubes sains"], converted_rows, FIELD_TO_COL_PHASE1, MATCH_COLS_PHASE1)
-    print(f"{n}/{len(converted_rows)} lignes écrites dans \"Collecte - Tubes sains\".")
-    if missed:
-        print(f"  -> {len(missed)} ligne(s) SANS correspondance trouvée dans la feuille :")
-        for m in missed:
-            print(f"     {m}")
+    total_written = 0
 
-    if n == 0:
+    if rows_sain:
+        n1, missed1 = _write_sheet(wb["Collecte - Tubes sains"], rows_sain, FIELD_TO_COL_PHASE1, MATCH_COLS_PHASE1)
+        print(f"Tubes sains : {n1}/{len(rows_sain)} lignes écrites dans \"Collecte - Tubes sains\".")
+        total_written += n1
+        if missed1:
+            print(f"  -> {len(missed1)} ligne(s) SANS correspondance :")
+            for m in missed1:
+                print(f"     {m}")
+
+    if rows_defaut:
+        n2, missed2 = _write_sheet(wb["Collecte - Défaut connu"], rows_defaut, FIELD_TO_COL_PHASE2, MATCH_COLS_PHASE2)
+        print(f"Tubes à défaut : {n2}/{len(rows_defaut)} lignes écrites dans \"Collecte - Défaut connu\".")
+        total_written += n2
+        if missed2:
+            print(f"  -> {len(missed2)} ligne(s) SANS correspondance :")
+            for m in missed2:
+                print(f"     {m}")
+
+    if total_written == 0:
         print("\n*** ATTENTION : AUCUNE ligne n'a été écrite. Fichier non modifié. ***")
         return
 
     wb.save(xlsx_path)
-    print(f"\n{n} ligne(s) écrite(s). Classeur mis à jour : {os.path.abspath(xlsx_path)}")
+    print(f"\n{total_written} ligne(s) écrite(s). Classeur mis à jour : {os.path.abspath(xlsx_path)}")
     print("Ouvrez-le dans Excel : les formules se recalculent automatiquement.")
     print("Rappel : la longueur du tube (po) n'est pas fournie par UltrasonApp — "
           "complétez-la manuellement dans le classeur si besoin.")
@@ -548,42 +604,8 @@ def export_to_excel():
 
 def main():
     print("=== Étude position des capteurs / longueur de tube ===")
-    print(f"Les résultats seront écrits dans : {OUTPUT_DIR}\n")
-    print("1. Lancer une session de collecte (acquisition + évaluation)")
-    print("2. Exporter les résultats collectés (ce programme) vers le classeur Excel")
-    print("3. Importer les tests de position faits dans UltrasonApp vers le classeur Excel")
-    choice = ask("Choix", "1")
-
-    if choice == "2":
-        export_to_excel()
-        return
-    if choice == "3":
-        import_ultrasonapp_position_csv()
-        return
-
-    cfg = cfgmod.load_config()
-    operateur = ask("Nom de l'opérateur")
-    meta, df_ref = pick_reference_base(cfg)
-    print(f"Base sélectionnée : {meta['nom']}")
-
-    print("\nMode d'acquisition :")
-    print("  1. DAQ (réelle si NI-DAQ branché, sinon simulée automatiquement)")
-    print("  2. Import CSV (tube déjà exporté par l'app principale)")
-    mode = "daq" if ask("Choix", "1") == "1" else "csv"
-
-    print("\nPhase à exécuter :")
-    print("  1. Phase 1 — tubes sains (caractérisation par position)")
-    print("  2. Phase 2 — tubes avec défaut connu (validation de détection)")
-    print("  3. Les deux, à la suite")
-    phase = ask("Choix", "1")
-
-    if phase in ("1", "3"):
-        run_phase1(cfg, df_ref, operateur, mode)
-    if phase in ("2", "3"):
-        run_phase2(cfg, df_ref, operateur, mode)
-
-    print("\nTerminé. Relancez ce programme et choisissez l'option 2 pour exporter")
-    print("ces résultats vers le classeur Excel de l'étude.")
+    print("Import des tests de position faits dans UltrasonApp vers le classeur Excel.\n")
+    import_ultrasonapp_position_csv()
 
 
 if __name__ == "__main__":
