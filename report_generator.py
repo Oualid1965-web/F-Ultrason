@@ -90,14 +90,18 @@ def append_result_csv(results_csv_path, tube_name, eval_result, snr_acquisition)
 
 
 def append_position_result_csv(results_csv_path, tube_name, position_cm, cote, eval_result, snr_acquisition,
-                                amplitude_fft_max=None):
+                                amplitude_fft_max=None, tube_type="Sain", position_reelle_defaut_cm=None):
     """Identique à append_result_csv, avec Position_cm et Cote en plus — utilisé par
     les tests de position des capteurs. Les autres colonnes ont exactement les mêmes
-    seuils/caractéristiques que les tests normaux (même cfg, même evaluate_tube)."""
+    seuils/caractéristiques que les tests normaux (même cfg, même evaluate_tube).
+    tube_type : "Sain" ou "Défaut" — détermine la feuille cible lors de l'import Excel.
+    position_reelle_defaut_cm : uniquement pour tube_type="Défaut"."""
     row = {
         "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "fichier": tube_name,
+        "Type": tube_type,
         "Position_cm": position_cm,
+        "Position_reelle_defaut_cm": position_reelle_defaut_cm,
         "Cote": cote,
         "SNR_acquisition_dB": None if snr_acquisition is None or np.isnan(snr_acquisition) else round(float(snr_acquisition), 2),
         "Health_Index": eval_result["health_index"],
