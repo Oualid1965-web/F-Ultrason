@@ -6,6 +6,8 @@ import os
 import numpy as np
 import joblib
 
+import defect_categorization as dcmod
+
 
 def load_reference_arrays(df_ref, seuil_snr):
     colonnes = ["Frequency_Hz", "Mean_HAPS", "STD_HAPS", "P5_HAPS", "P95_HAPS", "SNR"]
@@ -81,11 +83,9 @@ def calcul_health_index(y, ref):
     }
 
 
-def classify(health, seuil_accept, seuil_suspect):
+def classify(health, seuil_accept):
     if health >= seuil_accept:
-        return "ACCEPTE"
-    elif health >= seuil_suspect:
-        return "SUSPECT"
+        return "CONFORME"
     return "REJET"
 
 
@@ -121,7 +121,7 @@ def evaluate_tube(freq_test, signal_test, df_ref, cfg):
 
     analyse = calcul_health_index(y, ref)
     health = analyse["health_index"]
-    statut_base = classify(health, cfg["SEUIL_ACCEPT"], cfg["SEUIL_SUSPECT"])
+    statut_base = classify(health, cfg["SEUIL_ACCEPT"])
 
     proba_ia = None
     diagnostic_ia = "NON UTILISE"
@@ -137,12 +137,22 @@ def evaluate_tube(freq_test, signal_test, df_ref, cfg):
             else:
                 diagnostic_ia = "IA PLUTOT SAIN"
 
-    if statut_base == "ACCEPTE":
-        statut_final = "ACCEPTE"
+    if statut_base == "CONFORME":
+        statut_final = "CONFORME"
     elif diagnostic_ia == "DEFAUT COLLAGE PROBABLE":
         statut_final = "REJET IA"
     else:
         statut_final = statut_base
+
+    # Catégorisation complémentaire (ex. taux d'humidité estimé), uniquement si un
+    # défaut est déjà détecté par ailleurs — ce n'est jamais un critère de décision,
+    # juste une information supplémentaire pour orienter le diagnostic.
+    categorisation = {}
+    if statut_final != "CONFORME":
+        for cat, model_path in (cfg.get("MODELES_CATEGORISATION") or {}).items():
+            valeur, unite, err = dcmod.evaluate_regression(freq_test, signal_test, model_path)
+            if valeur is not None:
+                categorisation[cat] = {"valeur": round(valeur, 2), "unite": unite}
 
     return {
         "ref": ref,
@@ -159,4 +169,5 @@ def evaluate_tube(freq_test, signal_test, df_ref, cfg):
         "probabilite_ia": None if proba_ia is None else round(proba_ia, 3),
         "diagnostic_ia": diagnostic_ia,
         "statut_final": statut_final,
+        "categorisation": categorisation,
     }

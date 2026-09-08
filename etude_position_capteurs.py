@@ -4,7 +4,7 @@ Compagnon de collecte guidée pour l'étude "position des capteurs / longueur de
 Réutilise directement les modules existants de l'application (config, daq_acquisition,
 signal_processing, tube_comparator, reference_base_builder) : les résultats produits
 sont donc strictement les mêmes que ceux du bouton "Nouveau test" de l'app principale
-(Health Index, corrélation, MAE, Zmax, ratio d'énergie, statut ACCEPTÉ/SUSPECT/REJET).
+(Health Index, corrélation, MAE, Zmax, ratio d'énergie, statut CONFORME/REJET).
 
 Ce script ne pilote PAS la position mécanique des capteurs (c'est un réglage manuel
 sur le montage) : il vous guide dans la matrice de test définie dans le classeur
@@ -281,7 +281,7 @@ def run_phase2(cfg, df_ref, operateur, mode):
                 ev = evaluate_current(cfg, df_ref, tube_df)
                 amp_max = amplitude_fft_max(tube_df)
                 print_eval_summary(ev, snr_acq)
-                detecte = "Oui" if ev["statut_final"] != "ACCEPTE" else "Non"
+                detecte = "Oui" if ev["statut_final"] != "CONFORME" else "Non"
                 print(f"  -> Défaut détecté (déduit du statut) : {detecte}")
                 row = {
                     "ID_essai": essai_id,
