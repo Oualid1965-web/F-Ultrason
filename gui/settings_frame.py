@@ -9,7 +9,6 @@ FIELDS = [
     ("PARAMETRE", "choice", ["FFT Abs", "FFT Real", "FFT Imag"]),
     ("SEUIL_SNR", "float"),
     ("SEUIL_ACCEPT", "float"),
-    ("SEUIL_SUSPECT", "float"),
     ("DECIMATION", "int"),
     ("IQR_FACTOR", "float"),
 
@@ -35,8 +34,7 @@ FIELDS = [
 HELP_TEXT = {
     "PARAMETRE": "Colonne FFT utilisée pour la comparaison (Abs recommandé).",
     "SEUIL_SNR": "SNR minimal (dB) pour qu'un point de fréquence soit pris en compte.",
-    "SEUIL_ACCEPT": "Health Index (%) au-dessus duquel le tube est ACCEPTÉ.",
-    "SEUIL_SUSPECT": "Health Index (%) au-dessus duquel le tube est SUSPECT (sinon REJET).",
+    "SEUIL_ACCEPT": "Health Index (%) au-dessus duquel le tube est CONFORME (sinon REJET).",
     "DECIMATION": "Sous-échantillonnage des points fréquence (accélère les calculs).",
     "IQR_FACTOR": "Facteur IQR pour le rejet des tubes atypiques à la création de la base.",
     "SEUIL_ACTIVATION_IA": "Health Index en-dessous duquel l'IA est consultée en renfort.",

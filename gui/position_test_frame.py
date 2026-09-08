@@ -14,8 +14,7 @@ import report_generator as rgmod
 
 
 STATUS_COLORS = {
-    "ACCEPTE": "#1e8e3e",
-    "SUSPECT": "#f9ab00",
+    "CONFORME": "#1e8e3e",
     "REJET": "#d93025",
     "REJET IA": "#b31412",
 }
@@ -337,7 +336,7 @@ class PositionTestFrame(tk.Frame):
             "mae": avg(evg["mae"], evd["mae"]),
             "zmax": max(evg["zmax"], evd["zmax"]),  # le pire des deux côtés, pas une moyenne
             "energie_ratio": avg(evg["energie_ratio"], evd["energie_ratio"]),
-            "statut_base": tcmod.classify(health_avg, cfg["SEUIL_ACCEPT"], cfg["SEUIL_SUSPECT"]),
+            "statut_base": tcmod.classify(health_avg, cfg["SEUIL_ACCEPT"]),
             "probabilite_ia": "-",
             "diagnostic_ia": "NON COMBINE (voir détail par capteur dans le CSV)",
         }

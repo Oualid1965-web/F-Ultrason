@@ -13,11 +13,11 @@ import tube_comparator as tcmod
 import reference_base_builder as rbb
 import report_generator as rgmod
 import ia_model_manager as iamod
+import defect_categorization as dcmod
 
 
 STATUS_COLORS = {
-    "ACCEPTE": "#1e8e3e",
-    "SUSPECT": "#f9ab00",
+    "CONFORME": "#1e8e3e",
     "REJET": "#d93025",
     "REJET IA": "#b31412",
 }
@@ -83,6 +83,19 @@ class TestFrame(tk.Frame):
         tk.Button(info_col, text="🧠 Entraîner / Mettre à jour le modèle IA",
                   font=("Segoe UI", 9, "bold"), command=self.train_ia).pack(anchor="w", pady=(10, 2), fill="x")
 
+        tk.Label(info_col, text="Catégorisation — Humidité (%) :",
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(14, 2))
+        self.archive_humidity_btn = tk.Button(
+            info_col, text="💧 Archiver ce tube avec un taux d'humidité connu",
+            font=("Segoe UI", 9), state="disabled", command=self.archive_humidity)
+        self.archive_humidity_btn.pack(anchor="w", fill="x")
+        self.humidity_count_label = tk.Label(info_col, text="Archives humidité : 0",
+                                              font=("Segoe UI", 9), fg="#555555")
+        self.humidity_count_label.pack(anchor="w", pady=(2, 0))
+        tk.Button(info_col, text="🧠 Entraîner / Mettre à jour le modèle Humidité",
+                  font=("Segoe UI", 9, "bold"), command=self.train_humidity
+                  ).pack(anchor="w", pady=(4, 2), fill="x")
+
         bottom = tk.Frame(self)
         bottom.pack(pady=6)
         self.enrich_btn = tk.Button(bottom, text="➕ Ajouter ce tube à la base de référence",
@@ -105,6 +118,7 @@ class TestFrame(tk.Frame):
                  f"MAJ : {meta.get('date_maj', meta.get('date_creation', '?'))}"
         )
         self._refresh_ia_status()
+        self._refresh_humidity_count()
 
     def _refresh_ia_status(self):
         st = self.controller.state_data
@@ -140,12 +154,15 @@ class TestFrame(tk.Frame):
             "",
             f"STATUT FINAL : {ev['statut_final']}",
         ]
+        for cat, info in (ev.get("categorisation") or {}).items():
+            lines.append(f"  -> {cat.capitalize()} estimé(e) : {info['valeur']} {info['unite']}")
         self.info_text.insert(tk.END, "\n".join(lines))
         self.info_text.config(state="disabled")
 
     def _process_tube(self, name, DATA, fs_r, n_samples_r, tube_df):
         st = self.controller.state_data
-        cfg = st.cfg
+        cfg = dict(st.cfg)
+        cfg["MODELES_CATEGORISATION"] = dcmod.discover_models(st.current_base_folder)
         FREQ_R = tube_df["FREQ"].values
         FFT_SIGNAL = tube_df["FFT Real"].values + 1j * tube_df["FFT Imag"].values
 
@@ -169,6 +186,8 @@ class TestFrame(tk.Frame):
         self.export_btn.config(state="normal")
         self.archive_sain_btn.config(state="normal")
         self.archive_defaut_btn.config(state="normal")
+        self.archive_humidity_btn.config(state="normal")
+        self._refresh_humidity_count()
 
     def go_position_tests(self):
         self.controller.show_frame("PositionTestFrame")
@@ -308,3 +327,65 @@ class TestFrame(tk.Frame):
             txt.update_idletasks()
 
         return win, log
+
+    # ------------------------------------------------------------------
+    # Catégorisation des défauts (ex. humidité) : mêmes principes que l'IA
+    # supervisée ci-dessus, mais valeur continue (régression) au lieu d'un
+    # simple sain/défaut.
+    # ------------------------------------------------------------------
+
+    def _refresh_humidity_count(self):
+        st = self.controller.state_data
+        if not st.current_base_folder:
+            return
+        n, vmin, vmax = dcmod.count_labeled_archives(st.current_base_folder, "humidite")
+        txt = f"Archives humidité : {n}"
+        if n:
+            txt += f" ({vmin}% à {vmax}%)"
+        self.humidity_count_label.config(text=txt)
+
+    def archive_humidity(self):
+        st = self.controller.state_data
+        if self._current_tube_df is None or not st.current_base_folder:
+            return
+        valeur = simpledialog.askfloat(
+            "Taux d'humidité connu",
+            "Taux d'humidité mesuré pour ce tube (%) — mesure de référence "
+            "(laboratoire ou instrument dédié), pas une estimation :",
+            parent=self,
+        )
+        if valeur is None:
+            return
+        try:
+            dcmod.archive_labeled_tube(
+                st.current_base_folder, "humidite", self._current_tube_name,
+                self._current_tube_df, value=valeur, unit="%",
+                extra_info={"health_index": self._current_eval["health_index"] if self._current_eval else None}
+            )
+            self._refresh_humidity_count()
+            messagebox.showinfo("Archivé", f"Tube archivé avec un taux d'humidité de {valeur} %.")
+        except Exception as e:
+            messagebox.showerror("Erreur", str(e))
+
+    def train_humidity(self):
+        st = self.controller.state_data
+        if not st.current_base_folder:
+            messagebox.showwarning("Attention", "Aucune base de référence chargée.")
+            return
+        cfg = st.cfg
+        log_win, log = self._open_log_window("Entraînement du modèle Humidité")
+        try:
+            model_path, bundle = dcmod.train_regression_model(
+                st.current_base_folder, "humidite", cfg, n_bins=cfg.get("IA_N_BINS", 20), log=log
+            )
+            r2_txt = "N/A" if bundle["r2_cv"] is None else f"{bundle['r2_cv']:.3f}"
+            messagebox.showinfo(
+                "Modèle Humidité entraîné",
+                f"Modèle entraîné sur {bundle['n_samples']} tube(s) "
+                f"({bundle['value_min']}% à {bundle['value_max']}%).\n"
+                f"R² (validation croisée) : {r2_txt}\n\n"
+                "Ce modèle est désormais utilisé automatiquement : dès qu'un tube "
+                "est classé REJET, son taux d'humidité estimé s'affichera."
+            )
+        except Exception as e:
+            messagebox.showerror("Erreur d'entraînement", str(e))
