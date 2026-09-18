@@ -13,7 +13,6 @@ FIELDS = [
     ("IQR_FACTOR", "float"),
 
     ("--- IA supervisée ---", None),
-    ("SEUIL_ACTIVATION_IA", "float"),
     ("IA_N_BINS", "int"),
     ("CHEMIN_MODELE_IA", "file"),
 
@@ -37,7 +36,6 @@ HELP_TEXT = {
     "SEUIL_ACCEPT": "Health Index (%) au-dessus duquel le tube est CONFORME (sinon REJET).",
     "DECIMATION": "Sous-échantillonnage des points fréquence (accélère les calculs).",
     "IQR_FACTOR": "Facteur IQR pour le rejet des tubes atypiques à la création de la base.",
-    "SEUIL_ACTIVATION_IA": "Health Index en-dessous duquel l'IA est consultée en renfort.",
     "IA_N_BINS": "Nombre de bandes de fréquence utilisées comme variables IA à l'entraînement.",
     "CHEMIN_MODELE_IA": "Modèle .joblib actif (mis à jour automatiquement après entraînement).",
 }

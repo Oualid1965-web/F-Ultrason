@@ -199,6 +199,8 @@ class PositionTestFrame(tk.Frame):
             "",
             f"STATUT FINAL : {ev['statut_final']}",
         ]
+        for cat, info in (ev.get("categorisation") or {}).items():
+            lines.append(f"  -> {cat.capitalize()} estimé(e) : {info['valeur']} {info['unite']}")
         self.info_text.insert(tk.END, "\n".join(lines))
         self.info_text.config(state="disabled")
 
@@ -344,6 +346,21 @@ class PositionTestFrame(tk.Frame):
         # Si l'IA a rejeté un des deux côtés individuellement, le signaler dans le statut combiné.
         if evg["statut_final"] == "REJET IA" or evd["statut_final"] == "REJET IA":
             combined["statut_final"] = "REJET IA"
+
+        # Catégorisation combinée (humidité, radial...) — moyenne des deux côtés quand
+        # les deux l'ont estimée, sinon celle du côté qui l'a estimée.
+        combined_cat = {}
+        cat_g = evg.get("categorisation") or {}
+        cat_d = evd.get("categorisation") or {}
+        for cat in set(cat_g) | set(cat_d):
+            if cat in cat_g and cat in cat_d:
+                v = round((cat_g[cat]["valeur"] + cat_d[cat]["valeur"]) / 2, 2)
+                unite = cat_g[cat]["unite"]
+            else:
+                info = cat_g.get(cat) or cat_d.get(cat)
+                v, unite = info["valeur"], info["unite"]
+            combined_cat[cat] = {"valeur": v, "unite": unite}
+        combined["categorisation"] = combined_cat
 
         snr_avg = None
         if raw_g["snr_acq"] is not None and raw_d["snr_acq"] is not None:
