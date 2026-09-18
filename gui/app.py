@@ -1,4 +1,9 @@
+import os
+import sys
+import traceback
+from datetime import datetime
 import tkinter as tk
+from tkinter import messagebox
 
 import config as cfgmod
 from .home_frame import HomeFrame
@@ -46,6 +51,32 @@ class UltrasonApp(tk.Tk):
         if hasattr(frame, "on_show"):
             frame.on_show()
         frame.tkraise()
+
+    def report_callback_exception(self, exc, val, tb):
+        """Filet de sécurité global : l'app tourne en mode --windowed (sans console),
+        donc toute erreur non explicitement gérée disparaissait silencieusement
+        jusqu'ici (l'écran restait figé, sans aucun message). Désormais elle est
+        écrite dans erreurs.log ET affichée à l'écran, quel que soit l'endroit du
+        programme où elle survient (changement de page, clic sur un bouton...)."""
+        log_text = "".join(traceback.format_exception(exc, val, tb))
+        log_path = None
+        try:
+            if getattr(sys, "frozen", False):
+                log_dir = os.path.dirname(os.path.abspath(sys.executable))
+            else:
+                log_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            log_path = os.path.join(log_dir, "erreurs.log")
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write("\n" + "=" * 70 + "\n")
+                f.write(datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n")
+                f.write(log_text)
+        except Exception:
+            pass
+        where = f"\n\nDétail enregistré dans : {log_path}" if log_path else ""
+        messagebox.showerror(
+            "Erreur inattendue",
+            f"Une erreur inattendue est survenue :\n\n{val}{where}"
+        )
 
 
 def run():
