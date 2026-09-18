@@ -3,13 +3,19 @@ Catégorisation supplémentaire des défauts détectés (au-delà de CONFORME/RE
 prédiction d'une valeur continue (ex. taux d'humidité en %) à partir du signal, par
 apprentissage supervisé sur des tubes archivés à des valeurs connues.
 
-Généralisable à d'autres catégories continues plus tard (ex. épaisseur de colle en
-excès) : il suffit d'appeler ces mêmes fonctions avec un `category` différent — aucune
+Généralisable à d'autres catégories continues (ex. manque de colle, excès de colle) :
+il suffit d'appeler ces mêmes fonctions avec un `category` différent — aucune
 modification de ce fichier n'est nécessaire pour ajouter une nouvelle catégorie.
+
+En plus de la valeur qui définit la catégorie (ex. taux d'humidité), chaque tube
+archivé peut porter une valeur "radial" optionnelle (résistance radiale mesurée),
+transversale à toutes les catégories. Un modèle Radial séparé peut être entraîné en
+regroupant tous les tubes (de n'importe quelle catégorie) qui ont cette valeur
+renseignée — voir train_radial_model().
 
 Fonctionne sur le même principe que ia_model_manager.py (features = amplitude moyenne
 par bande de fréquence), mais avec un RandomForestRegressor au lieu d'un classifieur,
-puisque la cible (ex. taux d'humidité) est une valeur continue, pas une classe binaire.
+puisque la cible (ex. taux d'humidité, résistance radiale) est une valeur continue.
 """
 import os
 import glob
@@ -36,9 +42,12 @@ def _archive_dir(base_folder, category):
     return d
 
 
-def archive_labeled_tube(base_folder, category, tube_name, tube_df, value, unit="", extra_info=None):
+def archive_labeled_tube(base_folder, category, tube_name, tube_df, value, unit="",
+                          radial=None, radial_unit="N", extra_info=None):
     """Archive un tube avec une valeur connue (ex. taux d'humidité mesuré en laboratoire
-    ou par un instrument de référence) pour servir d'exemple d'entraînement."""
+    ou par un instrument de référence) pour servir d'exemple d'entraînement.
+    `radial` est optionnel — laissez None si la résistance radiale n'est pas encore
+    connue pour ce tube ; elle pourra être ajoutée plus tard via update_radial()."""
     d = _archive_dir(base_folder, category)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     safe = "".join(
@@ -56,6 +65,8 @@ def archive_labeled_tube(base_folder, category, tube_name, tube_df, value, unit=
             "category": category,
             "value": value,
             "unit": unit,
+            "radial": radial,
+            "radial_unit": radial_unit,
             "extra": extra_info or {},
         }, f, indent=2, ensure_ascii=False)
     return path
@@ -78,6 +89,55 @@ def count_labeled_archives(base_folder, category):
     return len(values), min(values), max(values)
 
 
+def count_radial_archives(base_folder, categories):
+    """Retourne (nombre_de_tubes, min, max) ayant une valeur radiale renseignée,
+    toutes catégories confondues parmi celles fournies."""
+    values = []
+    for cat in categories:
+        for rec in list_labeled_tubes(base_folder, [cat]):
+            if rec.get("radial") is not None:
+                values.append(rec["radial"])
+    if not values:
+        return 0, None, None
+    return len(values), min(values), max(values)
+
+
+def list_labeled_tubes(base_folder, categories):
+    """Liste les tubes archivés (métadonnées uniquement, pas les courbes) pour une ou
+    plusieurs catégories — utilisé pour parcourir/éditer des archives existantes
+    (ex. ajouter une valeur radiale après coup)."""
+    records = []
+    for category in categories:
+        d = os.path.join(base_folder, "categorisation_archive", category)
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(glob.glob(os.path.join(d, "*.json"))):
+            with open(fn, encoding="utf-8") as f:
+                meta = json.load(f)
+            records.append({
+                "meta_path": fn,
+                "category": category,
+                "tube": meta.get("tube"),
+                "date": meta.get("date"),
+                "value": meta.get("value"),
+                "unit": meta.get("unit", ""),
+                "radial": meta.get("radial"),
+                "radial_unit": meta.get("radial_unit", "N"),
+            })
+    return records
+
+
+def update_radial(meta_path, radial_value, radial_unit="N"):
+    """Ajoute ou modifie la valeur radiale d'un tube DÉJÀ archivé, sans toucher au
+    reste de ses métadonnées ni à sa courbe. `meta_path` vient de list_labeled_tubes()."""
+    with open(meta_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    meta["radial"] = radial_value
+    meta["radial_unit"] = radial_unit
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+
+
 def _load_labeled_archive(base_folder, category):
     d = os.path.join(base_folder, "categorisation_archive", category)
     records = []
@@ -94,6 +154,7 @@ def _load_labeled_archive(base_folder, category):
         records.append({
             "nom": os.path.basename(fn), "df": df,
             "value": meta["value"], "unit": meta.get("unit", ""),
+            "radial": meta.get("radial"), "radial_unit": meta.get("radial_unit", "N"),
         })
     return records
 
@@ -108,22 +169,13 @@ def _build_features(freq_ref, bins, freq_test, signal_test):
     return feats
 
 
-def train_regression_model(base_folder, category, cfg, n_bins=None, log=print):
-    if not SKLEARN_AVAILABLE:
-        raise RuntimeError(
-            "scikit-learn n'est pas installé. Exécutez : pip install scikit-learn"
-        )
-
-    n_bins = n_bins or cfg.get("IA_N_BINS", 20)
-    records = _load_labeled_archive(base_folder, category)
+def _train_from_records(records, model_name, base_folder, cfg, n_bins, log,
+                         target_key="value", unit=None):
     n = len(records)
-    log(f"Tubes archivés disponibles pour '{category}' : {n}")
-
     if n < 4:
         raise ValueError(
-            f"Il faut au moins 4 tubes archivés avec une valeur '{category}' connue pour "
-            f"entraîner le modèle (actuellement {n}). Archivez des tubes à des valeurs "
-            "différentes (ex. plusieurs taux d'humidité distincts)."
+            f"Il faut au moins 4 tubes archivés avec une valeur '{model_name}' connue "
+            f"pour entraîner ce modèle (actuellement {n})."
         )
 
     parametre = cfg["PARAMETRE"]
@@ -135,11 +187,12 @@ def train_regression_model(base_folder, category, cfg, n_bins=None, log=print):
         df = rec["df"]
         feats = _build_features(freq_ref, bins, df["FREQ"].values, df[parametre].values)
         X.append(feats)
-        y_vals.append(rec["value"])
+        y_vals.append(rec[target_key])
 
     X = np.array(X)
     y_vals = np.array(y_vals, dtype=float)
-    unit = records[0].get("unit", "")
+    if unit is None:
+        unit = records[0].get("unit" if target_key == "value" else "radial_unit", "")
 
     scaler = StandardScaler()
     Xs = scaler.fit_transform(X)
@@ -168,7 +221,7 @@ def train_regression_model(base_folder, category, cfg, n_bins=None, log=print):
         "bins": bins,
         "freq_ref": freq_ref,
         "parametre": parametre,
-        "category": category,
+        "category": model_name,
         "unit": unit,
         "r2_cv": r2_cv,
         "n_samples": n,
@@ -177,16 +230,43 @@ def train_regression_model(base_folder, category, cfg, n_bins=None, log=print):
         "date_entrainement": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
-    model_path = os.path.join(base_folder, f"categorisation_{category}_model.joblib")
+    model_path = os.path.join(base_folder, f"categorisation_{model_name}_model.joblib")
     joblib.dump(bundle, model_path)
-    log(f"\nModèle '{category}' entraîné et enregistré -> {model_path}")
+    log(f"\nModèle '{model_name}' entraîné et enregistré -> {model_path}")
     return model_path, bundle
+
+
+def train_regression_model(base_folder, category, cfg, n_bins=None, log=print):
+    """Entraîne le modèle d'UNE catégorie (ex. humidite, colle_manque, colle_exces)
+    sur sa propre valeur définissante — n'utilise PAS la valeur radiale."""
+    if not SKLEARN_AVAILABLE:
+        raise RuntimeError("scikit-learn n'est pas installé. Exécutez : pip install scikit-learn")
+    n_bins = n_bins or cfg.get("IA_N_BINS", 20)
+    records = _load_labeled_archive(base_folder, category)
+    log(f"Tubes archivés disponibles pour '{category}' : {len(records)}")
+    return _train_from_records(records, category, base_folder, cfg, n_bins, log, target_key="value")
+
+
+def train_radial_model(base_folder, categories, cfg, n_bins=None, log=print):
+    """Entraîne le modèle Radial en regroupant tous les tubes ayant une valeur radiale
+    renseignée, dans TOUTES les catégories fournies (humidité, manque de colle, excès
+    de colle...) — la catégorie d'origine du tube n'a pas d'importance ici, seule la
+    résistance radiale mesurée compte."""
+    if not SKLEARN_AVAILABLE:
+        raise RuntimeError("scikit-learn n'est pas installé. Exécutez : pip install scikit-learn")
+    n_bins = n_bins or cfg.get("IA_N_BINS", 20)
+    records = []
+    for cat in categories:
+        records += [r for r in _load_labeled_archive(base_folder, cat) if r.get("radial") is not None]
+    log(f"Tubes archivés avec valeur radiale connue (toutes catégories) : {len(records)}")
+    return _train_from_records(records, "radial", base_folder, cfg, n_bins, log, target_key="radial")
 
 
 def discover_models(base_folder):
     """Détecte automatiquement tous les modèles de catégorisation déjà entraînés
     dans le dossier de la base (categorisation_<category>_model.joblib), sans
-    configuration manuelle. Retourne {category: chemin_du_modele}."""
+    configuration manuelle. Retourne {category: chemin_du_modele} — inclut "radial"
+    comme une catégorie parmi d'autres, exactement comme humidite/colle_manque/etc."""
     found = {}
     if not base_folder or not os.path.isdir(base_folder):
         return found
