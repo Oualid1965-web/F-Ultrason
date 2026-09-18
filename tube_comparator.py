@@ -125,7 +125,7 @@ def evaluate_tube(freq_test, signal_test, df_ref, cfg):
 
     proba_ia = None
     diagnostic_ia = "NON UTILISE"
-    if health < cfg["SEUIL_ACTIVATION_IA"] and cfg.get("CHEMIN_MODELE_IA"):
+    if cfg.get("CHEMIN_MODELE_IA"):
         proba_ia, err = evaluate_with_ia(freq_test, signal_test, cfg["CHEMIN_MODELE_IA"])
         if err:
             diagnostic_ia = err
@@ -144,15 +144,14 @@ def evaluate_tube(freq_test, signal_test, df_ref, cfg):
     else:
         statut_final = statut_base
 
-    # Catégorisation complémentaire (ex. taux d'humidité estimé), uniquement si un
-    # défaut est déjà détecté par ailleurs — ce n'est jamais un critère de décision,
-    # juste une information supplémentaire pour orienter le diagnostic.
+    # Catégorisation complémentaire (ex. taux d'humidité, résistance radiale estimés) —
+    # calculée sur TOUS les tubes, conformes compris. Ce n'est jamais un critère de
+    # décision, juste une information supplémentaire pour orienter le diagnostic.
     categorisation = {}
-    if statut_final != "CONFORME":
-        for cat, model_path in (cfg.get("MODELES_CATEGORISATION") or {}).items():
-            valeur, unite, err = dcmod.evaluate_regression(freq_test, signal_test, model_path)
-            if valeur is not None:
-                categorisation[cat] = {"valeur": round(valeur, 2), "unite": unite}
+    for cat, model_path in (cfg.get("MODELES_CATEGORISATION") or {}).items():
+        valeur, unite, err = dcmod.evaluate_regression(freq_test, signal_test, model_path)
+        if valeur is not None:
+            categorisation[cat] = {"valeur": round(valeur, 2), "unite": unite}
 
     return {
         "ref": ref,

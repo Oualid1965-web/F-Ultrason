@@ -24,7 +24,6 @@ DEFAULT_CONFIG = {
     "PARAMETRE": "FFT Abs",
     "SEUIL_SNR": 5,
     "SEUIL_ACCEPT": 80,
-    "SEUIL_ACTIVATION_IA": 90,
     "DECIMATION": 10,
     "IQR_FACTOR": 1.5,
 
