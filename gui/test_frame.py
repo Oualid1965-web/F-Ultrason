@@ -1,6 +1,6 @@
 import os
 import tkinter as tk
-from tkinter import messagebox, filedialog, simpledialog
+from tkinter import messagebox, filedialog, simpledialog, ttk
 
 import pandas as pd
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -21,6 +21,18 @@ STATUS_COLORS = {
     "REJET": "#d93025",
     "REJET IA": "#b31412",
 }
+
+# Catégories de défauts catégorisables (valeur continue) — ajouter une catégorie ici
+# suffit à la faire apparaître dans le menu déroulant, aucun autre code à changer.
+DEFECT_CATEGORIES = {
+    "humidite": {"label": "Humidité", "unit": "%",
+                 "prompt": "Taux d'humidité mesuré pour ce tube (%) — mesure de référence, pas une estimation :"},
+    "colle_manque": {"label": "Manque de colle", "unit": "%",
+                      "prompt": "Valeur connue de manque de colle pour ce tube :"},
+    "colle_exces": {"label": "Excès de colle", "unit": "%",
+                     "prompt": "Valeur connue d'excès de colle pour ce tube :"},
+}
+_LABEL_TO_CATEGORY = {info["label"]: key for key, info in DEFECT_CATEGORIES.items()}
 
 
 class TestFrame(tk.Frame):
@@ -83,17 +95,42 @@ class TestFrame(tk.Frame):
         tk.Button(info_col, text="🧠 Entraîner / Mettre à jour le modèle IA",
                   font=("Segoe UI", 9, "bold"), command=self.train_ia).pack(anchor="w", pady=(10, 2), fill="x")
 
-        tk.Label(info_col, text="Catégorisation — Humidité (%) :",
+        # --- Catégorisation des défauts (humidité, manque/excès de colle...) ---
+        tk.Label(info_col, text="Catégorisation des défauts :",
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(14, 2))
-        self.archive_humidity_btn = tk.Button(
-            info_col, text="💧 Archiver ce tube avec un taux d'humidité connu",
-            font=("Segoe UI", 9), state="disabled", command=self.archive_humidity)
-        self.archive_humidity_btn.pack(anchor="w", fill="x")
-        self.humidity_count_label = tk.Label(info_col, text="Archives humidité : 0",
+
+        cat_row = tk.Frame(info_col)
+        cat_row.pack(anchor="w", fill="x")
+        tk.Label(cat_row, text="Catégorie :", font=("Segoe UI", 9)).pack(side="left")
+        self.category_var = tk.StringVar(value=DEFECT_CATEGORIES["humidite"]["label"])
+        self.category_combo = ttk.Combobox(
+            cat_row, state="readonly", width=18, textvariable=self.category_var,
+            values=[info["label"] for info in DEFECT_CATEGORIES.values()],
+        )
+        self.category_combo.pack(side="left", padx=(4, 0))
+        self.category_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_category_count())
+
+        self.archive_category_btn = tk.Button(
+            info_col, text="📌 Archiver ce tube dans cette catégorie",
+            font=("Segoe UI", 9), state="disabled", command=self.archive_category)
+        self.archive_category_btn.pack(anchor="w", fill="x", pady=(4, 0))
+        self.category_count_label = tk.Label(info_col, text="Archives : 0",
                                               font=("Segoe UI", 9), fg="#555555")
-        self.humidity_count_label.pack(anchor="w", pady=(2, 0))
-        tk.Button(info_col, text="🧠 Entraîner / Mettre à jour le modèle Humidité",
-                  font=("Segoe UI", 9, "bold"), command=self.train_humidity
+        self.category_count_label.pack(anchor="w", pady=(2, 0))
+        tk.Button(info_col, text="🧠 Entraîner le modèle de cette catégorie",
+                  font=("Segoe UI", 9, "bold"), command=self.train_category
+                  ).pack(anchor="w", pady=(4, 8), fill="x")
+
+        tk.Label(info_col, text="Résistance radiale (optionnelle, toutes catégories) :",
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(6, 2))
+        tk.Button(info_col, text="🔧 Ajouter/modifier le radial d'un tube archivé",
+                  font=("Segoe UI", 9), command=self.edit_radial_archive
+                  ).pack(anchor="w", fill="x")
+        self.radial_count_label = tk.Label(info_col, text="Tubes avec radial connu : 0",
+                                            font=("Segoe UI", 9), fg="#555555")
+        self.radial_count_label.pack(anchor="w", pady=(2, 0))
+        tk.Button(info_col, text="🧠 Entraîner le modèle Radial",
+                  font=("Segoe UI", 9, "bold"), command=self.train_radial
                   ).pack(anchor="w", pady=(4, 2), fill="x")
 
         bottom = tk.Frame(self)
@@ -118,7 +155,8 @@ class TestFrame(tk.Frame):
                  f"MAJ : {meta.get('date_maj', meta.get('date_creation', '?'))}"
         )
         self._refresh_ia_status()
-        self._refresh_humidity_count()
+        self._refresh_category_count()
+        self._refresh_radial_count()
 
     def _refresh_ia_status(self):
         st = self.controller.state_data
@@ -186,8 +224,9 @@ class TestFrame(tk.Frame):
         self.export_btn.config(state="normal")
         self.archive_sain_btn.config(state="normal")
         self.archive_defaut_btn.config(state="normal")
-        self.archive_humidity_btn.config(state="normal")
-        self._refresh_humidity_count()
+        self.archive_category_btn.config(state="normal")
+        self._refresh_category_count()
+        self._refresh_radial_count()
 
     def go_position_tests(self):
         self.controller.show_frame("PositionTestFrame")
@@ -329,63 +368,162 @@ class TestFrame(tk.Frame):
         return win, log
 
     # ------------------------------------------------------------------
-    # Catégorisation des défauts (ex. humidité) : mêmes principes que l'IA
-    # supervisée ci-dessus, mais valeur continue (régression) au lieu d'un
-    # simple sain/défaut.
+    # Catégorisation des défauts (humidité, manque/excès de colle...) : mêmes
+    # principes que l'IA supervisée ci-dessus, mais valeur continue (régression)
+    # au lieu d'un simple sain/défaut. La résistance radiale est transversale à
+    # toutes les catégories (voir defect_categorization.train_radial_model).
     # ------------------------------------------------------------------
 
-    def _refresh_humidity_count(self):
+    def _current_category(self):
+        return _LABEL_TO_CATEGORY[self.category_var.get()]
+
+    def _refresh_category_count(self):
         st = self.controller.state_data
         if not st.current_base_folder:
             return
-        n, vmin, vmax = dcmod.count_labeled_archives(st.current_base_folder, "humidite")
-        txt = f"Archives humidité : {n}"
+        cat = self._current_category()
+        info = DEFECT_CATEGORIES[cat]
+        n, vmin, vmax = dcmod.count_labeled_archives(st.current_base_folder, cat)
+        txt = f"Archives : {n}"
         if n:
-            txt += f" ({vmin}% à {vmax}%)"
-        self.humidity_count_label.config(text=txt)
+            txt += f" ({vmin}{info['unit']} à {vmax}{info['unit']})"
+        self.category_count_label.config(text=txt)
 
-    def archive_humidity(self):
+    def _refresh_radial_count(self):
+        st = self.controller.state_data
+        if not st.current_base_folder:
+            return
+        n, vmin, vmax = dcmod.count_radial_archives(st.current_base_folder, list(DEFECT_CATEGORIES.keys()))
+        txt = f"Tubes avec radial connu : {n}"
+        if n:
+            txt += f" ({vmin} à {vmax} N)"
+        self.radial_count_label.config(text=txt)
+
+    def archive_category(self):
         st = self.controller.state_data
         if self._current_tube_df is None or not st.current_base_folder:
             return
-        valeur = simpledialog.askfloat(
-            "Taux d'humidité connu",
-            "Taux d'humidité mesuré pour ce tube (%) — mesure de référence "
-            "(laboratoire ou instrument dédié), pas une estimation :",
-            parent=self,
-        )
+        cat = self._current_category()
+        info = DEFECT_CATEGORIES[cat]
+        valeur = simpledialog.askfloat(f"{info['label']} connu(e)", info["prompt"], parent=self)
         if valeur is None:
             return
+        radial = simpledialog.askfloat(
+            "Résistance radiale (optionnel)",
+            "Résistance radiale connue pour ce tube (N) — laissez vide si non mesurée "
+            "pour l'instant, vous pourrez l'ajouter plus tard :",
+            parent=self,
+        )
         try:
             dcmod.archive_labeled_tube(
-                st.current_base_folder, "humidite", self._current_tube_name,
-                self._current_tube_df, value=valeur, unit="%",
+                st.current_base_folder, cat, self._current_tube_name,
+                self._current_tube_df, value=valeur, unit=info["unit"],
+                radial=radial, radial_unit="N",
                 extra_info={"health_index": self._current_eval["health_index"] if self._current_eval else None}
             )
-            self._refresh_humidity_count()
-            messagebox.showinfo("Archivé", f"Tube archivé avec un taux d'humidité de {valeur} %.")
+            self._refresh_category_count()
+            self._refresh_radial_count()
+            msg = f"Tube archivé — {info['label']} : {valeur} {info['unit']}."
+            if radial is not None:
+                msg += f"\nRésistance radiale : {radial} N."
+            messagebox.showinfo("Archivé", msg)
         except Exception as e:
             messagebox.showerror("Erreur", str(e))
 
-    def train_humidity(self):
+    def train_category(self):
+        st = self.controller.state_data
+        if not st.current_base_folder:
+            messagebox.showwarning("Attention", "Aucune base de référence chargée.")
+            return
+        cat = self._current_category()
+        info = DEFECT_CATEGORIES[cat]
+        cfg = st.cfg
+        log_win, log = self._open_log_window(f"Entraînement du modèle {info['label']}")
+        try:
+            model_path, bundle = dcmod.train_regression_model(
+                st.current_base_folder, cat, cfg, n_bins=cfg.get("IA_N_BINS", 20), log=log
+            )
+            r2_txt = "N/A" if bundle["r2_cv"] is None else f"{bundle['r2_cv']:.3f}"
+            messagebox.showinfo(
+                f"Modèle {info['label']} entraîné",
+                f"Modèle entraîné sur {bundle['n_samples']} tube(s) "
+                f"({bundle['value_min']}{info['unit']} à {bundle['value_max']}{info['unit']}).\n"
+                f"R² (validation croisée) : {r2_txt}\n\n"
+                "Ce modèle est désormais utilisé automatiquement : dès qu'un tube "
+                "est classé REJET, cette valeur estimée s'affichera."
+            )
+        except Exception as e:
+            messagebox.showerror("Erreur d'entraînement", str(e))
+
+    def train_radial(self):
         st = self.controller.state_data
         if not st.current_base_folder:
             messagebox.showwarning("Attention", "Aucune base de référence chargée.")
             return
         cfg = st.cfg
-        log_win, log = self._open_log_window("Entraînement du modèle Humidité")
+        log_win, log = self._open_log_window("Entraînement du modèle Radial")
         try:
-            model_path, bundle = dcmod.train_regression_model(
-                st.current_base_folder, "humidite", cfg, n_bins=cfg.get("IA_N_BINS", 20), log=log
+            model_path, bundle = dcmod.train_radial_model(
+                st.current_base_folder, list(DEFECT_CATEGORIES.keys()), cfg,
+                n_bins=cfg.get("IA_N_BINS", 20), log=log
             )
             r2_txt = "N/A" if bundle["r2_cv"] is None else f"{bundle['r2_cv']:.3f}"
             messagebox.showinfo(
-                "Modèle Humidité entraîné",
-                f"Modèle entraîné sur {bundle['n_samples']} tube(s) "
-                f"({bundle['value_min']}% à {bundle['value_max']}%).\n"
-                f"R² (validation croisée) : {r2_txt}\n\n"
-                "Ce modèle est désormais utilisé automatiquement : dès qu'un tube "
-                "est classé REJET, son taux d'humidité estimé s'affichera."
+                "Modèle Radial entraîné",
+                f"Modèle entraîné sur {bundle['n_samples']} tube(s), toutes catégories confondues "
+                f"({bundle['value_min']} à {bundle['value_max']} N).\n"
+                f"R² (validation croisée) : {r2_txt}"
             )
         except Exception as e:
             messagebox.showerror("Erreur d'entraînement", str(e))
+
+    def edit_radial_archive(self):
+        """Parcourt les tubes déjà archivés (toutes catégories) pour y ajouter ou
+        corriger une valeur de résistance radiale, sans refaire d'acquisition —
+        utile pour les tubes déjà testés avant que le suivi radial n'existe."""
+        st = self.controller.state_data
+        if not st.current_base_folder:
+            messagebox.showwarning("Attention", "Aucune base de référence chargée.")
+            return
+        records = dcmod.list_labeled_tubes(st.current_base_folder, list(DEFECT_CATEGORIES.keys()))
+        if not records:
+            messagebox.showinfo("Aucune archive", "Aucun tube archivé pour l'instant.")
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Modifier une archive — ajouter/corriger le radial")
+        win.geometry("620x400")
+
+        columns = ("tube", "categorie", "valeur", "radial")
+        tree = ttk.Treeview(win, columns=columns, show="headings", height=15)
+        for c, h, w in zip(columns, ("Tube", "Catégorie", "Valeur", "Radial actuel"), (160, 130, 120, 120)):
+            tree.heading(c, text=h)
+            tree.column(c, width=w)
+        tree.pack(fill="both", expand=True, padx=8, pady=8)
+
+        for rec in records:
+            label = DEFECT_CATEGORIES.get(rec["category"], {}).get("label", rec["category"])
+            radial_txt = "-" if rec["radial"] is None else f"{rec['radial']} {rec['radial_unit']}"
+            tree.insert("", "end", iid=rec["meta_path"], values=(
+                rec["tube"], label, f"{rec['value']} {rec['unit']}", radial_txt
+            ))
+
+        def on_edit():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning("Attention", "Sélectionnez un tube dans la liste.", parent=win)
+                return
+            meta_path = sel[0]
+            radial = simpledialog.askfloat(
+                "Résistance radiale", "Nouvelle valeur de résistance radiale (N) :", parent=win
+            )
+            if radial is None:
+                return
+            dcmod.update_radial(meta_path, radial, radial_unit="N")
+            values = list(tree.item(meta_path)["values"])
+            values[3] = f"{radial} N"
+            tree.item(meta_path, values=values)
+            self._refresh_radial_count()
+
+        tk.Button(win, text="Modifier le radial du tube sélectionné", command=on_edit
+                  ).pack(pady=(0, 8))
