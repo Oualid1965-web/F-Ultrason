@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 import config as cfgmod
+import defect_categorization as dcmod
 
 
 FIELDS = [
@@ -97,6 +98,12 @@ class SettingsFrame(tk.Frame):
         tk.Button(btns, text="Retour", font=("Segoe UI", 11),
                   command=lambda: controller.show_frame("HomeFrame")).grid(row=0, column=1, padx=10)
 
+        tk.Label(self, text="Maintenance", font=("Segoe UI", 12, "bold")).pack(pady=(10, 2))
+        tk.Button(
+            self, text="🔧 Corriger l'unité radiale (N → bar) sur toutes les bases",
+            font=("Segoe UI", 10), command=self.corriger_unite_radial
+        ).pack(pady=(0, 15))
+
     def _browse(self, var):
         path = filedialog.askopenfilename(
             title="Sélectionner le modèle IA (.joblib)",
@@ -126,3 +133,37 @@ class SettingsFrame(tk.Frame):
             return
         cfgmod.save_config(cfg)
         messagebox.showinfo("Paramètres", "Paramètres enregistrés avec succès.")
+
+    def corriger_unite_radial(self):
+        if not messagebox.askyesno(
+            "Corriger l'unité radiale",
+            "Ceci va parcourir TOUTES vos bases de référence et corriger l'étiquette "
+            "d'unité des valeurs radiales archivées (« N » -> « bar »).\n\n"
+            "Les valeurs numériques ne sont PAS modifiées, seule l'unité affichée "
+            "l'est. Continuer ?"
+        ):
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Correction de l'unité radiale")
+        win.geometry("620x420")
+        txt = tk.Text(win, font=("Consolas", 9))
+        txt.pack(fill="both", expand=True)
+
+        def log(msg):
+            txt.insert(tk.END, str(msg) + "\n")
+            txt.see(tk.END)
+            txt.update_idletasks()
+
+        try:
+            c, d, s, nb = dcmod.corriger_unite_radial_toutes_bases(cfgmod.REF_BASES_DIR, log=log)
+            if c > 0:
+                log("\nLes modèles Radial déjà entraînés restent valides "
+                    "(pas besoin de les réentraîner à cause de ce correctif).")
+            messagebox.showinfo(
+                "Terminé",
+                f"{c} fichier(s) corrigé(s) sur {nb} base(s), "
+                f"{d} déjà en bar, {s} sans valeur radiale."
+            )
+        except Exception as e:
+            messagebox.showerror("Erreur", str(e))
