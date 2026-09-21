@@ -43,7 +43,7 @@ def _archive_dir(base_folder, category):
 
 
 def archive_labeled_tube(base_folder, category, tube_name, tube_df, value, unit="",
-                          radial=None, radial_unit="N", extra_info=None):
+                          radial=None, radial_unit="bar", extra_info=None):
     """Archive un tube avec une valeur connue (ex. taux d'humidité mesuré en laboratoire
     ou par un instrument de référence) pour servir d'exemple d'entraînement.
     `radial` est optionnel — laissez None si la résistance radiale n'est pas encore
@@ -122,12 +122,12 @@ def list_labeled_tubes(base_folder, categories):
                 "value": meta.get("value"),
                 "unit": meta.get("unit", ""),
                 "radial": meta.get("radial"),
-                "radial_unit": meta.get("radial_unit", "N"),
+                "radial_unit": meta.get("radial_unit", "bar"),
             })
     return records
 
 
-def update_radial(meta_path, radial_value, radial_unit="N"):
+def update_radial(meta_path, radial_value, radial_unit="bar"):
     """Ajoute ou modifie la valeur radiale d'un tube DÉJÀ archivé, sans toucher au
     reste de ses métadonnées ni à sa courbe. `meta_path` vient de list_labeled_tubes()."""
     with open(meta_path, encoding="utf-8") as f:
@@ -154,7 +154,7 @@ def _load_labeled_archive(base_folder, category):
         records.append({
             "nom": os.path.basename(fn), "df": df,
             "value": meta["value"], "unit": meta.get("unit", ""),
-            "radial": meta.get("radial"), "radial_unit": meta.get("radial_unit", "N"),
+            "radial": meta.get("radial"), "radial_unit": meta.get("radial_unit", "bar"),
         })
     return records
 
@@ -260,6 +260,56 @@ def train_radial_model(base_folder, categories, cfg, n_bins=None, log=print):
         records += [r for r in _load_labeled_archive(base_folder, cat) if r.get("radial") is not None]
     log(f"Tubes archivés avec valeur radiale connue (toutes catégories) : {len(records)}")
     return _train_from_records(records, "radial", base_folder, cfg, n_bins, log, target_key="radial")
+
+
+def corriger_unite_radial_toutes_bases(ref_bases_dir, log=print):
+    """Corrige l'étiquette d'unité (ex. "N" -> "bar") des archives de catégorisation
+    sur TOUTES les bases de référence trouvées dans ref_bases_dir. Ne touche jamais
+    à la valeur numérique du radial, seulement à son étiquette d'unité. Retourne
+    (total_corriges, total_deja_bon, total_sans_radial, nb_bases)."""
+    if not os.path.isdir(ref_bases_dir):
+        log(f"Dossier introuvable : {ref_bases_dir}")
+        return 0, 0, 0, 0
+
+    noms_bases = sorted(
+        d for d in os.listdir(ref_bases_dir)
+        if os.path.isdir(os.path.join(ref_bases_dir, d))
+    )
+    if not noms_bases:
+        log("Aucune base de référence trouvée.")
+        return 0, 0, 0, 0
+
+    total_corriges = total_deja_bon = total_sans_radial = 0
+    for nom in noms_bases:
+        base_folder = os.path.join(ref_bases_dir, nom)
+        pattern = os.path.join(base_folder, "categorisation_archive", "*", "*.json")
+        fichiers = glob.glob(pattern)
+        c = d = s = 0
+        for fn in fichiers:
+            with open(fn, encoding="utf-8") as f:
+                meta = json.load(f)
+            if meta.get("radial") is None:
+                s += 1
+                continue
+            ancienne_unite = meta.get("radial_unit")
+            if ancienne_unite == "bar":
+                d += 1
+                continue
+            meta["radial_unit"] = "bar"
+            with open(fn, "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2, ensure_ascii=False)
+            c += 1
+            log(f"  [{nom}] Corrigé : {os.path.basename(fn)} "
+                f"(radial={meta['radial']}, unité '{ancienne_unite}' -> 'bar')")
+        if c or d or s:
+            log(f"[{nom}] {c} corrigé(s), {d} déjà en bar, {s} sans valeur radiale.")
+        total_corriges += c
+        total_deja_bon += d
+        total_sans_radial += s
+
+    log(f"\nTOTAL, {len(noms_bases)} base(s) : {total_corriges} corrigé(s), "
+        f"{total_deja_bon} déjà en bar, {total_sans_radial} sans valeur radiale.")
+    return total_corriges, total_deja_bon, total_sans_radial, len(noms_bases)
 
 
 def discover_models(base_folder):
