@@ -22,17 +22,14 @@ STATUS_COLORS = {
     "REJET IA": "#b31412",
 }
 
-# Catégories de défauts catégorisables (valeur continue) — ajouter une catégorie ici
-# suffit à la faire apparaître dans le menu déroulant, aucun autre code à changer.
+# Catégorie catégorisable (valeur continue), en plus de la décision bon/mauvais
+# collage (gérée séparément par l'IA supervisée ci-dessous). Ajouter une catégorie
+# ici suffirait à la refaire apparaître, mais pour l'instant seule l'humidité est
+# gardée en plus de la décision de collage.
 DEFECT_CATEGORIES = {
     "humidite": {"label": "Humidité", "unit": "%",
                  "prompt": "Taux d'humidité mesuré pour ce tube (%) — mesure de référence, pas une estimation :"},
-    "colle_manque": {"label": "Manque de colle", "unit": "%",
-                      "prompt": "Valeur connue de manque de colle pour ce tube :"},
-    "colle_exces": {"label": "Excès de colle", "unit": "%",
-                     "prompt": "Valeur connue d'excès de colle pour ce tube :"},
 }
-_LABEL_TO_CATEGORY = {info["label"]: key for key, info in DEFECT_CATEGORIES.items()}
 
 
 class TestFrame(tk.Frame):
@@ -95,29 +92,18 @@ class TestFrame(tk.Frame):
         tk.Button(info_col, text="🧠 Entraîner / Mettre à jour le modèle IA",
                   font=("Segoe UI", 9, "bold"), command=self.train_ia).pack(anchor="w", pady=(10, 2), fill="x")
 
-        # --- Catégorisation des défauts (humidité, manque/excès de colle...) ---
-        tk.Label(info_col, text="Catégorisation des défauts :",
+        # --- Catégorisation Humidité, en plus de la décision bon/mauvais collage (IA) ---
+        tk.Label(info_col, text="Catégorisation — Humidité :",
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(14, 2))
 
-        cat_row = tk.Frame(info_col)
-        cat_row.pack(anchor="w", fill="x")
-        tk.Label(cat_row, text="Catégorie :", font=("Segoe UI", 9)).pack(side="left")
-        self.category_var = tk.StringVar(value=DEFECT_CATEGORIES["humidite"]["label"])
-        self.category_combo = ttk.Combobox(
-            cat_row, state="readonly", width=18, textvariable=self.category_var,
-            values=[info["label"] for info in DEFECT_CATEGORIES.values()],
-        )
-        self.category_combo.pack(side="left", padx=(4, 0))
-        self.category_combo.bind("<<ComboboxSelected>>", lambda e: self._refresh_category_count())
-
         self.archive_category_btn = tk.Button(
-            info_col, text="📌 Archiver ce tube dans cette catégorie",
+            info_col, text="📌 Archiver ce tube avec un taux d'humidité connu",
             font=("Segoe UI", 9), state="disabled", command=self.archive_category)
         self.archive_category_btn.pack(anchor="w", fill="x", pady=(4, 0))
         self.category_count_label = tk.Label(info_col, text="Archives : 0",
                                               font=("Segoe UI", 9), fg="#555555")
         self.category_count_label.pack(anchor="w", pady=(2, 0))
-        tk.Button(info_col, text="🧠 Entraîner le modèle de cette catégorie",
+        tk.Button(info_col, text="🧠 Entraîner le modèle Humidité",
                   font=("Segoe UI", 9, "bold"), command=self.train_category
                   ).pack(anchor="w", pady=(4, 8), fill="x")
 
@@ -375,7 +361,7 @@ class TestFrame(tk.Frame):
     # ------------------------------------------------------------------
 
     def _current_category(self):
-        return _LABEL_TO_CATEGORY[self.category_var.get()]
+        return "humidite"
 
     def _refresh_category_count(self):
         st = self.controller.state_data
@@ -396,7 +382,7 @@ class TestFrame(tk.Frame):
         n, vmin, vmax = dcmod.count_radial_archives(st.current_base_folder, list(DEFECT_CATEGORIES.keys()))
         txt = f"Tubes avec radial connu : {n}"
         if n:
-            txt += f" ({vmin} à {vmax} N)"
+            txt += f" ({vmin} à {vmax} bar)"
         self.radial_count_label.config(text=txt)
 
     def archive_category(self):
@@ -410,7 +396,7 @@ class TestFrame(tk.Frame):
             return
         radial = simpledialog.askfloat(
             "Résistance radiale (optionnel)",
-            "Résistance radiale connue pour ce tube (N) — laissez vide si non mesurée "
+            "Résistance radiale connue pour ce tube (bar) — laissez vide si non mesurée "
             "pour l'instant, vous pourrez l'ajouter plus tard :",
             parent=self,
         )
@@ -418,14 +404,19 @@ class TestFrame(tk.Frame):
             dcmod.archive_labeled_tube(
                 st.current_base_folder, cat, self._current_tube_name,
                 self._current_tube_df, value=valeur, unit=info["unit"],
-                radial=radial, radial_unit="N",
+                radial=radial, radial_unit="bar",
                 extra_info={"health_index": self._current_eval["health_index"] if self._current_eval else None}
             )
             self._refresh_category_count()
             self._refresh_radial_count()
             msg = f"Tube archivé — {info['label']} : {valeur} {info['unit']}."
             if radial is not None:
-                msg += f"\nRésistance radiale : {radial} N."
+                msg += f"\nRésistance radiale : {radial} bar."
+                if "radial" not in dcmod.discover_models(st.current_base_folder):
+                    msg += ("\n\n⚠ Le modèle Radial n'a encore jamais été entraîné — "
+                            "l'archivage seul ne suffit pas. Cliquez sur « Entraîner le "
+                            "modèle Radial » quand vous aurez assez de tubes pour qu'il "
+                            "s'affiche dans les résultats.")
             messagebox.showinfo("Archivé", msg)
         except Exception as e:
             messagebox.showerror("Erreur", str(e))
@@ -471,7 +462,7 @@ class TestFrame(tk.Frame):
             messagebox.showinfo(
                 "Modèle Radial entraîné",
                 f"Modèle entraîné sur {bundle['n_samples']} tube(s), toutes catégories confondues "
-                f"({bundle['value_min']} à {bundle['value_max']} N).\n"
+                f"({bundle['value_min']} à {bundle['value_max']} bar).\n"
                 f"R² (validation croisée) : {r2_txt}"
             )
         except Exception as e:
@@ -515,15 +506,30 @@ class TestFrame(tk.Frame):
                 return
             meta_path = sel[0]
             radial = simpledialog.askfloat(
-                "Résistance radiale", "Nouvelle valeur de résistance radiale (N) :", parent=win
+                "Résistance radiale", "Nouvelle valeur de résistance radiale (bar) :", parent=win
             )
             if radial is None:
                 return
-            dcmod.update_radial(meta_path, radial, radial_unit="N")
+            dcmod.update_radial(meta_path, radial, radial_unit="bar")
             values = list(tree.item(meta_path)["values"])
-            values[3] = f"{radial} N"
+            values[3] = f"{radial} bar"
             tree.item(meta_path, values=values)
             self._refresh_radial_count()
+            refresh_reminder()
 
         tk.Button(win, text="Modifier le radial du tube sélectionné", command=on_edit
-                  ).pack(pady=(0, 8))
+                  ).pack(pady=(0, 4))
+
+        reminder_label = tk.Label(win, text="", font=("Segoe UI", 9, "bold"), fg="#b31412")
+        reminder_label.pack(pady=(0, 8))
+
+        def refresh_reminder():
+            if "radial" not in dcmod.discover_models(st.current_base_folder):
+                reminder_label.config(
+                    text="⚠ N'oubliez pas de cliquer sur « Entraîner le modèle Radial » "
+                         "une fois vos valeurs saisies — l'archivage seul ne suffit pas."
+                )
+            else:
+                reminder_label.config(text="")
+
+        refresh_reminder()
