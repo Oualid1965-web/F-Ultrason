@@ -15,6 +15,7 @@ FIELDS = [
 
     ("--- IA supervisée ---", None),
     ("IA_N_BINS", "int"),
+    ("SEUIL_DECISION_IA", "float"),
     ("CHEMIN_MODELE_IA", "file"),
 
     ("--- Acquisition DAQ ---", None),
@@ -34,10 +35,11 @@ FIELDS = [
 HELP_TEXT = {
     "PARAMETRE": "Colonne FFT utilisée pour la comparaison (Abs recommandé).",
     "SEUIL_SNR": "SNR minimal (dB) pour qu'un point de fréquence soit pris en compte.",
-    "SEUIL_ACCEPT": "Health Index (%) au-dessus duquel le tube est CONFORME (sinon REJET).",
+    "SEUIL_ACCEPT": "Health Index (%) au-dessus duquel le tube est BON COLLAGE (sinon MAUVAIS COLLAGE).",
     "DECIMATION": "Sous-échantillonnage des points fréquence (accélère les calculs).",
     "IQR_FACTOR": "Facteur IQR pour le rejet des tubes atypiques à la création de la base.",
     "IA_N_BINS": "Nombre de bandes de fréquence utilisées comme variables IA à l'entraînement.",
+    "SEUIL_DECISION_IA": "Probabilité de défaut (0 à 1) à partir de laquelle l'IA décide MAUVAIS COLLAGE (0,5 par défaut).",
     "CHEMIN_MODELE_IA": "Modèle .joblib actif (mis à jour automatiquement après entraînement).",
 }
 

@@ -11,13 +11,8 @@ import daq_acquisition as daqmod
 import signal_processing as spmod
 import tube_comparator as tcmod
 import report_generator as rgmod
+from .status_banner import StatusBanner
 
-
-STATUS_COLORS = {
-    "CONFORME": "#1e8e3e",
-    "REJET": "#d93025",
-    "REJET IA": "#b31412",
-}
 
 # Positions testées, en cm depuis le centre — les deux capteurs sont positionnés
 # à la MÊME distance du centre à chaque étape (ex. Gauche à 4 cm ET Droit à 4 cm).
@@ -107,9 +102,9 @@ class PositionTestFrame(tk.Frame):
         tk.Button(acq_frame, text="🎙 Acquérir Droit seul (ai1)", font=("Segoe UI", 9),
                   command=lambda: self.acquire_side("Droit")).grid(row=1, column=1, padx=8)
 
-        self.status_label = tk.Label(self, text="Aucun test effectué", font=("Segoe UI", 14, "bold"),
-                                      fg="white", bg="#888888", pady=6)
-        self.status_label.pack(fill="x", padx=15, pady=6)
+        # Bandeau en deux moitiés : verdict Health Index (gauche) et décision de l'IA (droite)
+        self.banner = StatusBanner(self, title_size=14)
+        self.banner.pack(fill="x", padx=15, pady=6)
 
         body = tk.Frame(self)
         body.pack(fill="both", expand=True, padx=15, pady=5)
@@ -175,10 +170,6 @@ class PositionTestFrame(tk.Frame):
             pass
 
     # ------------------------------------------------------------------
-    def _set_status(self, statut):
-        color = STATUS_COLORS.get(statut, "#888888")
-        self.status_label.config(text=f"Résultat : {statut}", bg=color)
-
     def _show_info(self, ev, snr_acq, position_cm, side):
         self.info_text.config(state="normal")
         self.info_text.delete("1.0", tk.END)
@@ -193,10 +184,8 @@ class PositionTestFrame(tk.Frame):
             f"MAE : {ev['mae']}",
             f"Z max : {ev['zmax']}",
             f"Ratio énergie : {ev['energie_ratio']}",
-            f"Statut base saine : {ev['statut_base']}",
             f"Probabilité IA : {ev['probabilite_ia']}",
             f"Diagnostic IA : {ev['diagnostic_ia']}",
-            "",
             f"STATUT FINAL : {ev['statut_final']}",
         ]
         for cat, info in (ev.get("categorisation") or {}).items():
@@ -339,13 +328,20 @@ class PositionTestFrame(tk.Frame):
             "zmax": max(evg["zmax"], evd["zmax"]),  # le pire des deux côtés, pas une moyenne
             "energie_ratio": avg(evg["energie_ratio"], evd["energie_ratio"]),
             "statut_base": tcmod.classify(health_avg, cfg["SEUIL_ACCEPT"]),
-            "probabilite_ia": "-",
-            "diagnostic_ia": "NON COMBINE (voir détail par capteur dans le CSV)",
         }
+        # Décision IA combinée : moyenne des probabilités de défaut des deux côtés (ou celle
+        # du seul côté disponible), puis même seuil de décision que pour un test normal.
+        probs = [p for p in (evg.get("probabilite_ia"), evd.get("probabilite_ia"))
+                 if isinstance(p, (int, float))]
+        proba_avg = round(sum(probs) / len(probs), 3) if probs else None
+        combined["probabilite_ia"] = proba_avg if proba_avg is not None else "-"
+        combined["decision_ia"] = tcmod.decision_ia_from_proba(proba_avg, cfg.get("SEUIL_DECISION_IA", 0.5))
+        combined["diagnostic_ia"] = ("MOYENNE DES DEUX COTES (détail par capteur dans le CSV)"
+                                     if probs else evg.get("diagnostic_ia", "NON UTILISE"))
         combined["statut_final"] = combined["statut_base"]
-        # Si l'IA a rejeté un des deux côtés individuellement, le signaler dans le statut combiné.
-        if evg["statut_final"] == "REJET IA" or evd["statut_final"] == "REJET IA":
-            combined["statut_final"] = "REJET IA"
+        # Si l'IA a confirmé un mauvais collage sur un des deux côtés, le signaler dans le statut combiné.
+        if "MAUVAIS COLLAGE IA" in (evg["statut_final"], evd["statut_final"]):
+            combined["statut_final"] = "MAUVAIS COLLAGE IA"
 
         # Catégorisation combinée (humidité, radial...) — moyenne des deux côtés quand
         # les deux l'ont estimée, sinon celle du côté qui l'a estimée.
@@ -372,7 +368,7 @@ class PositionTestFrame(tk.Frame):
                                 raw_g["FREQ_R"], raw_g["FFT_SIGNAL"], evg)
         self.canvas.draw()
 
-        self._set_status(combined["statut_final"])
+        self.banner.show(combined)
         self._show_info(combined, snr_avg, position_cm, "Gauche + Droit combinés")
 
         self.tree.insert("", 0, values=(
@@ -406,7 +402,7 @@ class PositionTestFrame(tk.Frame):
             self.canvas.draw()
             self.update_idletasks()
 
-            self._set_status(ev["statut_final"])
+            self.banner.show(ev)
             self._show_info(ev, snr_acq, position_cm, side)
 
             results_csv = os.path.join(st.current_base_folder, "resultats_tests_position.csv")

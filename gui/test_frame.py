@@ -14,13 +14,8 @@ import reference_base_builder as rbb
 import report_generator as rgmod
 import ia_model_manager as iamod
 import defect_categorization as dcmod
+from .status_banner import StatusBanner
 
-
-STATUS_COLORS = {
-    "CONFORME": "#1e8e3e",
-    "REJET": "#d93025",
-    "REJET IA": "#b31412",
-}
 
 # Catégorie catégorisable (valeur continue), en plus de la décision bon/mauvais
 # collage (gérée séparément par l'IA supervisée ci-dessous). Ajouter une catégorie
@@ -58,24 +53,59 @@ class TestFrame(tk.Frame):
         tk.Button(actions, text="📂 Tester un tube existant (CSV)", font=("Segoe UI", 11),
                   command=self.new_test_import).grid(row=0, column=1, padx=8)
 
-        self.status_label = tk.Label(self, text="Aucun test effectué", font=("Segoe UI", 16, "bold"),
-                                      fg="white", bg="#888888", pady=8)
-        self.status_label.pack(fill="x", padx=15, pady=6)
+        # Bandeau en deux moitiés : verdict Health Index (gauche) et décision de l'IA (droite)
+        self.banner = StatusBanner(self)
+        self.banner.pack(fill="x", padx=15, pady=6)
+
+        # Rangée de boutons du bas, réservée AVANT le corps de la page : c'est le corps
+        # (graphique + colonne de droite) qui se réduit si la fenêtre est basse, jamais
+        # cette rangée.
+        bottom = tk.Frame(self)
+        bottom.pack(side="bottom", pady=6)
+        self.enrich_btn = tk.Button(bottom, text="➕ Ajouter ce tube à la base de référence",
+                                     font=("Segoe UI", 10), state="disabled", command=self.enrich_base)
+        self.enrich_btn.grid(row=0, column=0, padx=8)
+        self.export_btn = tk.Button(bottom, text="💾 Exporter les données du tube (CSV)",
+                                     font=("Segoe UI", 10), state="disabled", command=self.export_tube)
+        self.export_btn.grid(row=0, column=1, padx=8)
 
         body = tk.Frame(self)
         body.pack(fill="both", expand=True, padx=15, pady=5)
 
         self.figure = Figure(figsize=(9, 6))
         self.canvas = FigureCanvasTkAgg(self.figure, master=body)
-        self.canvas.get_tk_widget().pack(side="left", fill="both", expand=True)
 
-        info_col = tk.Frame(body, width=300)
-        info_col.pack(side="left", fill="y", padx=10)
-        self.info_text = tk.Text(info_col, width=40, height=18, font=("Consolas", 9), state="disabled")
+        # Colonne de droite défilable : elle contient beaucoup de boutons (IA, humidité,
+        # radial) et dépasserait sinon du bas de la fenêtre, masquant les derniers.
+        # Elle est placée AVANT le graphique pour garder sa largeur complète : c'est le
+        # graphique qui se réduit si la fenêtre est étroite.
+        info_wrap = tk.Frame(body)
+        info_wrap.pack(side="right", fill="y", padx=(10, 0))
+        self.canvas.get_tk_widget().pack(side="left", fill="both", expand=True)
+        info_scroll = ttk.Scrollbar(info_wrap, orient="vertical")
+        info_scroll.pack(side="right", fill="y")
+        info_canvas = tk.Canvas(info_wrap, highlightthickness=0, yscrollcommand=info_scroll.set)
+        info_canvas.pack(side="left", fill="y")
+        info_scroll.config(command=info_canvas.yview)
+        info_col = tk.Frame(info_canvas)
+        info_canvas.create_window((0, 0), window=info_col, anchor="nw")
+
+        def _sync_info_canvas(event=None):
+            info_canvas.configure(scrollregion=info_canvas.bbox("all"),
+                                  width=info_col.winfo_reqwidth())
+        info_col.bind("<Configure>", _sync_info_canvas)
+
+        def _on_info_wheel(event):
+            info_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        info_canvas.bind("<Enter>", lambda e: info_canvas.bind_all("<MouseWheel>", _on_info_wheel))
+        info_canvas.bind("<Leave>", lambda e: info_canvas.unbind_all("<MouseWheel>"))
+        self.info_canvas = info_canvas
+
+        self.info_text = tk.Text(info_col, width=40, height=12, font=("Consolas", 9), state="disabled")
         self.info_text.pack(fill="both", expand=False)
 
         tk.Label(info_col, text="Confirmation terrain (archivage IA) :",
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(10, 2))
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(6, 2))
         confirm_frame = tk.Frame(info_col)
         confirm_frame.pack(anchor="w")
         self.archive_sain_btn = tk.Button(confirm_frame, text="📌 Confirmer SAIN", state="disabled",
@@ -87,16 +117,16 @@ class TestFrame(tk.Frame):
 
         self.archive_count_label = tk.Label(info_col, text="Archives : 0 sain / 0 défaut",
                                              font=("Segoe UI", 9), fg="#555555")
-        self.archive_count_label.pack(anchor="w", pady=(4, 0))
+        self.archive_count_label.pack(anchor="w", pady=(2, 0))
 
         tk.Button(info_col, text="🧠 Entraîner / Mettre à jour le modèle IA",
-                  font=("Segoe UI", 9, "bold"), command=self.train_ia).pack(anchor="w", pady=(10, 2), fill="x")
+                  font=("Segoe UI", 9, "bold"), command=self.train_ia).pack(anchor="w", pady=(6, 2), fill="x")
         tk.Button(info_col, text="🔁 Corriger le statut des tubes archivés (sain / défaut)",
                   font=("Segoe UI", 9), command=self.manage_ia_archive).pack(anchor="w", pady=(2, 2), fill="x")
 
         # --- Catégorisation Humidité, en plus de la décision bon/mauvais collage (IA) ---
         tk.Label(info_col, text="Catégorisation — Humidité :",
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(14, 2))
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(8, 2))
 
         self.archive_category_btn = tk.Button(
             info_col, text="📌 Archiver ce tube avec un taux d'humidité connu",
@@ -107,10 +137,10 @@ class TestFrame(tk.Frame):
         self.category_count_label.pack(anchor="w", pady=(2, 0))
         tk.Button(info_col, text="🧠 Entraîner le modèle Humidité",
                   font=("Segoe UI", 9, "bold"), command=self.train_category
-                  ).pack(anchor="w", pady=(4, 8), fill="x")
+                  ).pack(anchor="w", pady=(4, 4), fill="x")
 
         tk.Label(info_col, text="Résistance radiale (optionnelle, toutes catégories) :",
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(6, 2))
+                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(4, 2))
         tk.Button(info_col, text="🔧 Ajouter/modifier le radial d'un tube archivé",
                   font=("Segoe UI", 9), command=self.edit_radial_archive
                   ).pack(anchor="w", fill="x")
@@ -120,15 +150,6 @@ class TestFrame(tk.Frame):
         tk.Button(info_col, text="🧠 Entraîner le modèle Radial",
                   font=("Segoe UI", 9, "bold"), command=self.train_radial
                   ).pack(anchor="w", pady=(4, 2), fill="x")
-
-        bottom = tk.Frame(self)
-        bottom.pack(pady=6)
-        self.enrich_btn = tk.Button(bottom, text="➕ Ajouter ce tube à la base de référence",
-                                     font=("Segoe UI", 10), state="disabled", command=self.enrich_base)
-        self.enrich_btn.grid(row=0, column=0, padx=8)
-        self.export_btn = tk.Button(bottom, text="💾 Exporter les données du tube (CSV)",
-                                     font=("Segoe UI", 10), state="disabled", command=self.export_tube)
-        self.export_btn.grid(row=0, column=1, padx=8)
 
         self._current_tube_df = None
         self._current_tube_name = None
@@ -158,10 +179,6 @@ class TestFrame(tk.Frame):
                                    f"{n_sain} sain(s) / {n_defaut} défaut(s)")
         self.archive_count_label.config(text=f"Archives : {n_sain} sain / {n_defaut} défaut")
 
-    def _set_status(self, statut):
-        color = STATUS_COLORS.get(statut, "#888888")
-        self.status_label.config(text=f"Résultat : {statut}", bg=color)
-
     def _show_info(self, ev, snr_acq):
         self.info_text.config(state="normal")
         self.info_text.delete("1.0", tk.END)
@@ -174,10 +191,8 @@ class TestFrame(tk.Frame):
             f"MAE : {ev['mae']}",
             f"Z max : {ev['zmax']}",
             f"Ratio énergie : {ev['energie_ratio']}",
-            f"Statut base saine : {ev['statut_base']}",
             f"Probabilité IA : {ev['probabilite_ia']}",
             f"Diagnostic IA : {ev['diagnostic_ia']}",
-            "",
             f"STATUT FINAL : {ev['statut_final']}",
         ]
         for cat, info in (ev.get("categorisation") or {}).items():
@@ -199,7 +214,7 @@ class TestFrame(tk.Frame):
         rgmod.plot_test_result(self.figure, DATA, fs_r, n_samples_r, FREQ_R, FFT_SIGNAL, ev)
         self.canvas.draw()
 
-        self._set_status(ev["statut_final"])
+        self.banner.show(ev)
         self._show_info(ev, snr_acq)
 
         results_csv = os.path.join(st.current_base_folder, "resultats_tests.csv")
@@ -534,8 +549,8 @@ class TestFrame(tk.Frame):
                 f"Modèle entraîné sur {bundle['n_samples']} tube(s) "
                 f"({bundle['value_min']}{info['unit']} à {bundle['value_max']}{info['unit']}).\n"
                 f"R² (validation croisée) : {r2_txt}\n\n"
-                "Ce modèle est désormais utilisé automatiquement : dès qu'un tube "
-                "est classé REJET, cette valeur estimée s'affichera."
+                "Ce modèle est désormais utilisé automatiquement : cette valeur estimée "
+                "s'affichera pour chaque tube testé."
             )
         except Exception as e:
             messagebox.showerror("Erreur d'entraînement", str(e))
