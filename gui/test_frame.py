@@ -91,6 +91,8 @@ class TestFrame(tk.Frame):
 
         tk.Button(info_col, text="🧠 Entraîner / Mettre à jour le modèle IA",
                   font=("Segoe UI", 9, "bold"), command=self.train_ia).pack(anchor="w", pady=(10, 2), fill="x")
+        tk.Button(info_col, text="🔁 Corriger le statut des tubes archivés (sain / défaut)",
+                  font=("Segoe UI", 9), command=self.manage_ia_archive).pack(anchor="w", pady=(2, 2), fill="x")
 
         # --- Catégorisation Humidité, en plus de la décision bon/mauvais collage (IA) ---
         tk.Label(info_col, text="Catégorisation — Humidité :",
@@ -315,6 +317,98 @@ class TestFrame(tk.Frame):
             messagebox.showinfo("Archivé", f"Tube archivé comme « {libelle} ».")
         except Exception as e:
             messagebox.showerror("Erreur", str(e))
+
+    def manage_ia_archive(self):
+        """Liste les tubes archivés (sain / défaut) et permet de corriger leur statut,
+        par exemple repasser en SAIN des tubes archivés DÉFAUT par erreur."""
+        st = self.controller.state_data
+        if not st.current_base_folder:
+            messagebox.showwarning("Attention", "Aucune base de référence chargée.")
+            return
+
+        win = tk.Toplevel(self)
+        win.title("Tubes archivés — corriger le statut sain / défaut")
+        win.geometry("780x560")
+
+        top = tk.Frame(win)
+        top.pack(fill="x", padx=10, pady=(10, 4))
+        tk.Label(top, text="Afficher :", font=("Segoe UI", 10)).pack(side="left")
+        filter_var = tk.StringVar(value="Défauts")
+        combo = ttk.Combobox(top, state="readonly", width=12, textvariable=filter_var,
+                              values=["Tous", "Défauts", "Sains"])
+        combo.pack(side="left", padx=6)
+        count_lbl = tk.Label(top, text="", font=("Segoe UI", 10), fg="#555555")
+        count_lbl.pack(side="right")
+
+        tk.Label(win, text="Sélectionnez un ou plusieurs tubes (Ctrl ou Maj + clic), puis choisissez le nouveau statut.",
+                 font=("Segoe UI", 9), fg="#555555").pack(anchor="w", padx=10)
+
+        columns = ("tube", "statut", "date")
+        tree = ttk.Treeview(win, columns=columns, show="headings", selectmode="extended", height=16)
+        for c, h, w in zip(columns, ("Tube", "Statut actuel", "Archivé le"), (360, 120, 200)):
+            tree.heading(c, text=h)
+            tree.column(c, width=w)
+        tree.pack(fill="both", expand=True, padx=10, pady=6)
+
+        reminder = tk.Label(win, text="", font=("Segoe UI", 9, "bold"), fg="#b31412",
+                            wraplength=740, justify="left")
+        reminder.pack(anchor="w", padx=10)
+
+        row_to_path = {}
+
+        def refresh():
+            tree.delete(*tree.get_children())
+            row_to_path.clear()
+            wanted = {"Tous": None, "Défauts": "defaut", "Sains": "sain"}[filter_var.get()]
+            records = iamod.list_archived_tubes(st.current_base_folder)
+            n_s = sum(1 for r in records if r["label"] == "sain")
+            n_d = sum(1 for r in records if r["label"] == "defaut")
+            for i, r in enumerate(records):
+                if wanted and r["label"] != wanted:
+                    continue
+                iid = str(i)
+                row_to_path[iid] = r["csv_path"]
+                tree.insert("", "end", iid=iid, values=(
+                    r["tube"], "Sain" if r["label"] == "sain" else "Défaut", r["date"]
+                ))
+            count_lbl.config(text=f"{n_s} sain(s) / {n_d} défaut(s)")
+            self._refresh_ia_status()
+
+        def apply(new_label):
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning("Attention", "Sélectionnez au moins un tube dans la liste.", parent=win)
+                return
+            txt = "SAIN" if new_label == "sain" else "DÉFAUT"
+            if not messagebox.askyesno("Confirmer", f"Passer {len(sel)} tube(s) en {txt} ?", parent=win):
+                return
+            n_ok = 0
+            for iid in sel:
+                path = row_to_path.get(iid)
+                try:
+                    iamod.relabel_archived_tube(path, new_label)
+                    n_ok += 1
+                except Exception as e:
+                    messagebox.showerror("Erreur", f"{os.path.basename(path or '')} : {e}", parent=win)
+            refresh()
+            if n_ok:
+                reminder.config(
+                    text=f"{n_ok} tube(s) passé(s) en {txt}. Le modèle IA actuel ne le sait pas encore : "
+                         "cliquez sur « Ré-entraîner le modèle IA » pour qu'il en tienne compte."
+                )
+
+        combo.bind("<<ComboboxSelected>>", lambda e: refresh())
+
+        btns = tk.Frame(win)
+        btns.pack(pady=(4, 12))
+        tk.Button(btns, text="📌 Passer en SAIN", font=("Segoe UI", 10),
+                  command=lambda: apply("sain")).grid(row=0, column=0, padx=6)
+        tk.Button(btns, text="🚩 Passer en DÉFAUT", font=("Segoe UI", 10),
+                  command=lambda: apply("defaut")).grid(row=0, column=1, padx=6)
+        tk.Button(btns, text="🧠 Ré-entraîner le modèle IA", font=("Segoe UI", 10, "bold"),
+                  command=self.train_ia).grid(row=0, column=2, padx=6)
+
+        refresh()
 
     def train_ia(self):
         st = self.controller.state_data
