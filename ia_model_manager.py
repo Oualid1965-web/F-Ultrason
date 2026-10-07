@@ -17,6 +17,7 @@ strictement compatible avec le format attendu par tube_comparator.evaluate_with_
 import os
 import glob
 import json
+import shutil
 from datetime import datetime
 
 import numpy as np
@@ -72,6 +73,77 @@ def count_archives(base_folder):
     n_sain = len(glob.glob(os.path.join(sain_dir, "*.csv"))) if os.path.isdir(sain_dir) else 0
     n_defaut = len(glob.glob(os.path.join(defaut_dir, "*.csv"))) if os.path.isdir(defaut_dir) else 0
     return n_sain, n_defaut
+
+
+def list_archived_tubes(base_folder):
+    """Liste les tubes archivés (sain et défaut) avec leurs métadonnées, pour pouvoir
+    les consulter ou corriger leur statut. Retourne une liste de dicts :
+    {"csv_path", "label" ("sain"/"defaut"), "tube", "date"}."""
+    records = []
+    for sub in ("sain", "defaut"):
+        d = os.path.join(base_folder, "ia_archive", sub)
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(glob.glob(os.path.join(d, "*.csv"))):
+            tube, date = os.path.basename(fn), ""
+            meta_path = fn[:-4] + ".json"
+            if os.path.exists(meta_path):
+                try:
+                    with open(meta_path, encoding="utf-8") as f:
+                        meta = json.load(f)
+                    tube = meta.get("tube", tube)
+                    date = meta.get("date", "")
+                except Exception:
+                    pass
+            records.append({"csv_path": fn, "label": sub, "tube": tube, "date": date})
+    return records
+
+
+def relabel_archived_tube(csv_path, new_label):
+    """Change le statut d'un tube DÉJÀ archivé ("sain" <-> "defaut") : déplace son
+    CSV et ses métadonnées dans l'autre dossier, met à jour l'étiquette et garde une
+    trace du changement (champ "historique") pour la traçabilité.
+    new_label : "sain" ou "defaut". Retourne le nouveau chemin du CSV.
+    Le modèle IA déjà entraîné n'est PAS modifié : il faut le ré-entraîner ensuite."""
+    if new_label not in ("sain", "defaut"):
+        raise ValueError("new_label doit valoir 'sain' ou 'defaut'.")
+    src_dir = os.path.dirname(csv_path)
+    ia_root = os.path.dirname(src_dir)
+    current = os.path.basename(src_dir)
+    if current == new_label:
+        return csv_path
+
+    dst_dir = os.path.join(ia_root, new_label)
+    os.makedirs(dst_dir, exist_ok=True)
+    base = os.path.basename(csv_path)[:-4]
+    dst_base, k = base, 1
+    while os.path.exists(os.path.join(dst_dir, dst_base + ".csv")):
+        k += 1
+        dst_base = f"{base}_{k}"
+    new_csv = os.path.join(dst_dir, dst_base + ".csv")
+
+    old_meta = csv_path[:-4] + ".json"
+    meta = {}
+    if os.path.exists(old_meta):
+        try:
+            with open(old_meta, encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            meta = {}
+    meta.setdefault("tube", base)
+    meta["label"] = new_label
+    meta.setdefault("historique", []).append({
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "de": current,
+        "vers": new_label,
+    })
+
+    shutil.move(csv_path, new_csv)
+    with open(new_csv[:-4] + ".json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+    if os.path.exists(old_meta):
+        os.remove(old_meta)
+    return new_csv
 
 
 def _load_archive(base_folder):
