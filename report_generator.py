@@ -40,7 +40,7 @@ def plot_test_result(figure, DATA, fs_r, n_samples_r, FREQ_R, FFT_SIGNAL, eval_r
     # --- Comparaison à la base saine ---
     ax3 = figure.add_subplot(2, 2, 3)
     f = ref["freq"]
-    ax3.fill_between(f, ref["p5"], ref["p95"], alpha=0.3, label="Zone conforme P5/P95")
+    ax3.fill_between(f, ref["p5"], ref["p95"], alpha=0.3, label="Zone de bon collage P5/P95")
     ax3.plot(f, ref["mean"], linewidth=2, label="Moyenne base saine")
     ax3.plot(f, y, linewidth=1, label="Tube évalué")
     ax3.set_xlabel("Fréquence (Hz)")

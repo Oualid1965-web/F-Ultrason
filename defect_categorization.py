@@ -1,5 +1,5 @@
 """
-Catégorisation supplémentaire des défauts détectés (au-delà de CONFORME/REJET) :
+Catégorisation supplémentaire des défauts détectés (au-delà de BON COLLAGE / MAUVAIS COLLAGE) :
 prédiction d'une valeur continue (ex. taux d'humidité en %) à partir du signal, par
 apprentissage supervisé sur des tubes archivés à des valeurs connues.
 

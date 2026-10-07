@@ -83,10 +83,23 @@ def calcul_health_index(y, ref):
     }
 
 
+BON_COLLAGE = "BON COLLAGE"
+MAUVAIS_COLLAGE = "MAUVAIS COLLAGE"
+MAUVAIS_COLLAGE_IA = "MAUVAIS COLLAGE IA"
+
+
 def classify(health, seuil_accept):
     if health >= seuil_accept:
-        return "CONFORME"
-    return "REJET"
+        return BON_COLLAGE
+    return MAUVAIS_COLLAGE
+
+
+def decision_ia_from_proba(proba_defaut, seuil=0.5):
+    """Décision propre de l'IA (indépendante du Health Index) : MAUVAIS COLLAGE si la
+    probabilité de défaut atteint le seuil, sinon BON COLLAGE. None si pas de probabilité."""
+    if proba_defaut is None:
+        return None
+    return MAUVAIS_COLLAGE if proba_defaut >= seuil else BON_COLLAGE
 
 
 def evaluate_with_ia(freq_test, signal_test, modele_path):
@@ -137,15 +150,19 @@ def evaluate_tube(freq_test, signal_test, df_ref, cfg):
             else:
                 diagnostic_ia = "IA PLUTOT SAIN"
 
-    if statut_base == "CONFORME":
-        statut_final = "CONFORME"
+    if statut_base == BON_COLLAGE:
+        statut_final = BON_COLLAGE
     elif diagnostic_ia == "DEFAUT COLLAGE PROBABLE":
-        statut_final = "REJET IA"
+        statut_final = MAUVAIS_COLLAGE_IA
     else:
         statut_final = statut_base
 
+    # Décision de l'IA, affichée à part du verdict Health Index : elle ne dépend pas du
+    # Health Index, pour qu'un désaccord entre les deux soit visible tel quel.
+    decision_ia = decision_ia_from_proba(proba_ia, cfg.get("SEUIL_DECISION_IA", 0.5))
+
     # Catégorisation complémentaire (ex. taux d'humidité, résistance radiale estimés) —
-    # calculée sur TOUS les tubes, conformes compris. Ce n'est jamais un critère de
+    # calculée sur TOUS les tubes, bons collages compris. Ce n'est jamais un critère de
     # décision, juste une information supplémentaire pour orienter le diagnostic.
     categorisation = {}
     for cat, model_path in (cfg.get("MODELES_CATEGORISATION") or {}).items():
@@ -167,6 +184,7 @@ def evaluate_tube(freq_test, signal_test, df_ref, cfg):
         "statut_base": statut_base,
         "probabilite_ia": None if proba_ia is None else round(proba_ia, 3),
         "diagnostic_ia": diagnostic_ia,
+        "decision_ia": decision_ia,
         "statut_final": statut_final,
         "categorisation": categorisation,
     }

@@ -30,6 +30,7 @@ DEFAULT_CONFIG = {
     # ---- IA supervisée (archivage + entraînement) ----
     "CHEMIN_MODELE_IA": "",   # chemin vers le modèle .joblib actif
     "IA_N_BINS": 20,          # nombre de bandes de fréquence utilisées comme features IA
+    "SEUIL_DECISION_IA": 0.5, # probabilité de défaut à partir de laquelle l'IA décide MAUVAIS COLLAGE
 
     # ---- Acquisition DAQ (ACQUISITION_GUI.py) ----
     "DEVICE_NAME": "cDAQ9185-1FA54B4",
