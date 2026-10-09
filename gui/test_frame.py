@@ -14,6 +14,7 @@ import reference_base_builder as rbb
 import report_generator as rgmod
 import ia_model_manager as iamod
 import defect_categorization as dcmod
+import archive_editor as aedmod
 from .status_banner import StatusBanner
 
 
@@ -104,7 +105,7 @@ class TestFrame(tk.Frame):
         self.info_text = tk.Text(info_col, width=40, height=12, font=("Consolas", 9), state="disabled")
         self.info_text.pack(fill="both", expand=False)
 
-        tk.Label(info_col, text="Confirmation terrain (archivage IA) :",
+        tk.Label(info_col, text="Archivage du tube testé :",
                  font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(6, 2))
         confirm_frame = tk.Frame(info_col)
         confirm_frame.pack(anchor="w")
@@ -114,42 +115,27 @@ class TestFrame(tk.Frame):
         self.archive_defaut_btn = tk.Button(confirm_frame, text="🚩 Confirmer DÉFAUT", state="disabled",
                                              command=lambda: self.archive_current(1))
         self.archive_defaut_btn.grid(row=0, column=1, padx=3, pady=2)
-
-        self.archive_count_label = tk.Label(info_col, text="Archives : 0 sain / 0 défaut",
-                                             font=("Segoe UI", 9), fg="#555555")
-        self.archive_count_label.pack(anchor="w", pady=(2, 0))
-
-        tk.Button(info_col, text="🧠 Entraîner / Mettre à jour le modèle IA",
-                  font=("Segoe UI", 9, "bold"), command=self.train_ia).pack(anchor="w", pady=(6, 2), fill="x")
-        tk.Button(info_col, text="🔁 Corriger le statut des tubes archivés (sain / défaut)",
-                  font=("Segoe UI", 9), command=self.manage_ia_archive).pack(anchor="w", pady=(2, 2), fill="x")
-
-        # --- Catégorisation Humidité, en plus de la décision bon/mauvais collage (IA) ---
-        tk.Label(info_col, text="Catégorisation — Humidité :",
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(8, 2))
-
         self.archive_category_btn = tk.Button(
-            info_col, text="📌 Archiver ce tube avec un taux d'humidité connu",
+            info_col, text="📌 Archiver avec humidité (et radial)",
             font=("Segoe UI", 9), state="disabled", command=self.archive_category)
-        self.archive_category_btn.pack(anchor="w", fill="x", pady=(4, 0))
-        self.category_count_label = tk.Label(info_col, text="Archives : 0",
-                                              font=("Segoe UI", 9), fg="#555555")
-        self.category_count_label.pack(anchor="w", pady=(2, 0))
-        tk.Button(info_col, text="🧠 Entraîner le modèle Humidité",
-                  font=("Segoe UI", 9, "bold"), command=self.train_category
-                  ).pack(anchor="w", pady=(4, 4), fill="x")
+        self.archive_category_btn.pack(anchor="w", fill="x", pady=(4, 2))
 
-        tk.Label(info_col, text="Résistance radiale (optionnelle, toutes catégories) :",
-                 font=("Segoe UI", 9, "bold")).pack(anchor="w", pady=(4, 2))
-        tk.Button(info_col, text="🔧 Ajouter/modifier le radial d'un tube archivé",
-                  font=("Segoe UI", 9), command=self.edit_radial_archive
-                  ).pack(anchor="w", fill="x")
-        self.radial_count_label = tk.Label(info_col, text="Tubes avec radial connu : 0",
+        self.archive_count_label = tk.Label(info_col, text="IA : 0 sain / 0 défaut",
+                                             font=("Segoe UI", 9), fg="#555555")
+        self.archive_count_label.pack(anchor="w")
+        self.category_count_label = tk.Label(info_col, text="Humidité : 0 tube",
+                                              font=("Segoe UI", 9), fg="#555555")
+        self.category_count_label.pack(anchor="w")
+        self.radial_count_label = tk.Label(info_col, text="Radial : 0 tube",
                                             font=("Segoe UI", 9), fg="#555555")
-        self.radial_count_label.pack(anchor="w", pady=(2, 0))
-        tk.Button(info_col, text="🧠 Entraîner le modèle Radial",
-                  font=("Segoe UI", 9, "bold"), command=self.train_radial
-                  ).pack(anchor="w", pady=(4, 2), fill="x")
+        self.radial_count_label.pack(anchor="w")
+
+        tk.Button(info_col, text="🧠 Entraîner les modèles (IA, humidité, radial)",
+                  font=("Segoe UI", 9, "bold"), command=self.train_all
+                  ).pack(anchor="w", pady=(8, 2), fill="x")
+        tk.Button(info_col, text="✏️ Corriger un tube archivé",
+                  font=("Segoe UI", 9), command=self.edit_archived_tube
+                  ).pack(anchor="w", pady=(2, 2), fill="x")
 
         self._current_tube_df = None
         self._current_tube_name = None
@@ -177,7 +163,7 @@ class TestFrame(tk.Frame):
             n_sain, n_defaut = iamod.count_archives(st.current_base_folder)
         self.ia_label.config(text=f"IA supervisée : {active}   |   Archives disponibles : "
                                    f"{n_sain} sain(s) / {n_defaut} défaut(s)")
-        self.archive_count_label.config(text=f"Archives : {n_sain} sain / {n_defaut} défaut")
+        self.archive_count_label.config(text=f"IA : {n_sain} sain / {n_defaut} défaut")
 
     def _show_info(self, ev, snr_acq):
         self.info_text.config(state="normal")
@@ -349,121 +335,6 @@ class TestFrame(tk.Frame):
         except Exception as e:
             messagebox.showerror("Erreur", str(e))
 
-    def manage_ia_archive(self):
-        """Liste les tubes archivés (sain / défaut) et permet de corriger leur statut,
-        par exemple repasser en SAIN des tubes archivés DÉFAUT par erreur."""
-        st = self.controller.state_data
-        if not st.current_base_folder:
-            messagebox.showwarning("Attention", "Aucune base de référence chargée.")
-            return
-
-        win = tk.Toplevel(self)
-        win.title("Tubes archivés — corriger le statut sain / défaut")
-        win.geometry("780x560")
-
-        top = tk.Frame(win)
-        top.pack(fill="x", padx=10, pady=(10, 4))
-        tk.Label(top, text="Afficher :", font=("Segoe UI", 10)).pack(side="left")
-        filter_var = tk.StringVar(value="Défauts")
-        combo = ttk.Combobox(top, state="readonly", width=12, textvariable=filter_var,
-                              values=["Tous", "Défauts", "Sains"])
-        combo.pack(side="left", padx=6)
-        count_lbl = tk.Label(top, text="", font=("Segoe UI", 10), fg="#555555")
-        count_lbl.pack(side="right")
-
-        tk.Label(win, text="Sélectionnez un ou plusieurs tubes (Ctrl ou Maj + clic), puis choisissez le nouveau statut.",
-                 font=("Segoe UI", 9), fg="#555555").pack(anchor="w", padx=10)
-
-        columns = ("tube", "statut", "date")
-        tree = ttk.Treeview(win, columns=columns, show="headings", selectmode="extended", height=16)
-        for c, h, w in zip(columns, ("Tube", "Statut actuel", "Archivé le"), (360, 120, 200)):
-            tree.heading(c, text=h)
-            tree.column(c, width=w)
-        tree.pack(fill="both", expand=True, padx=10, pady=6)
-
-        reminder = tk.Label(win, text="", font=("Segoe UI", 9, "bold"), fg="#b31412",
-                            wraplength=740, justify="left")
-        reminder.pack(anchor="w", padx=10)
-
-        row_to_path = {}
-
-        def refresh():
-            tree.delete(*tree.get_children())
-            row_to_path.clear()
-            wanted = {"Tous": None, "Défauts": "defaut", "Sains": "sain"}[filter_var.get()]
-            records = iamod.list_archived_tubes(st.current_base_folder)
-            n_s = sum(1 for r in records if r["label"] == "sain")
-            n_d = sum(1 for r in records if r["label"] == "defaut")
-            for i, r in enumerate(records):
-                if wanted and r["label"] != wanted:
-                    continue
-                iid = str(i)
-                row_to_path[iid] = r["csv_path"]
-                tree.insert("", "end", iid=iid, values=(
-                    r["tube"], "Sain" if r["label"] == "sain" else "Défaut", r["date"]
-                ))
-            count_lbl.config(text=f"{n_s} sain(s) / {n_d} défaut(s)")
-            self._refresh_ia_status()
-
-        def apply(new_label):
-            sel = tree.selection()
-            if not sel:
-                messagebox.showwarning("Attention", "Sélectionnez au moins un tube dans la liste.", parent=win)
-                return
-            txt = "SAIN" if new_label == "sain" else "DÉFAUT"
-            if not messagebox.askyesno("Confirmer", f"Passer {len(sel)} tube(s) en {txt} ?", parent=win):
-                return
-            n_ok = 0
-            for iid in sel:
-                path = row_to_path.get(iid)
-                try:
-                    iamod.relabel_archived_tube(path, new_label)
-                    n_ok += 1
-                except Exception as e:
-                    messagebox.showerror("Erreur", f"{os.path.basename(path or '')} : {e}", parent=win)
-            refresh()
-            if n_ok:
-                reminder.config(
-                    text=f"{n_ok} tube(s) passé(s) en {txt}. Le modèle IA actuel ne le sait pas encore : "
-                         "cliquez sur « Ré-entraîner le modèle IA » pour qu'il en tienne compte."
-                )
-
-        combo.bind("<<ComboboxSelected>>", lambda e: refresh())
-
-        btns = tk.Frame(win)
-        btns.pack(pady=(4, 12))
-        tk.Button(btns, text="📌 Passer en SAIN", font=("Segoe UI", 10),
-                  command=lambda: apply("sain")).grid(row=0, column=0, padx=6)
-        tk.Button(btns, text="🚩 Passer en DÉFAUT", font=("Segoe UI", 10),
-                  command=lambda: apply("defaut")).grid(row=0, column=1, padx=6)
-        tk.Button(btns, text="🧠 Ré-entraîner le modèle IA", font=("Segoe UI", 10, "bold"),
-                  command=self.train_ia).grid(row=0, column=2, padx=6)
-
-        refresh()
-
-    def train_ia(self):
-        st = self.controller.state_data
-        if not st.current_base_folder:
-            messagebox.showwarning("Attention", "Aucune base de référence chargée.")
-            return
-        cfg = st.cfg
-        log_win, log = self._open_log_window("Entraînement du modèle IA")
-        try:
-            model_path, bundle = iamod.train_ia_model(
-                st.current_base_folder, cfg, n_bins=cfg.get("IA_N_BINS", 20), log=log
-            )
-            cfg["CHEMIN_MODELE_IA"] = model_path
-            cfgmod.save_config(cfg)
-            self._refresh_ia_status()
-            messagebox.showinfo(
-                "Modèle IA entraîné",
-                f"Modèle entraîné sur {bundle['n_sain']} sain(s) / {bundle['n_defaut']} défaut(s).\n"
-                f"AUC (validation croisée) : {bundle['auc_cv']:.3f}\n\n"
-                "Ce modèle est désormais utilisé automatiquement lors des prochains tests."
-            )
-        except Exception as e:
-            messagebox.showerror("Erreur d'entraînement", str(e))
-
     def _open_log_window(self, title):
         win = tk.Toplevel(self)
         win.title(title)
@@ -495,9 +366,9 @@ class TestFrame(tk.Frame):
         cat = self._current_category()
         info = DEFECT_CATEGORIES[cat]
         n, vmin, vmax = dcmod.count_labeled_archives(st.current_base_folder, cat)
-        txt = f"Archives : {n}"
+        txt = f"Humidité : {n} tube(s)"
         if n:
-            txt += f" ({vmin}{info['unit']} à {vmax}{info['unit']})"
+            txt += f" ({vmin:g} à {vmax:g} {info['unit']})"
         self.category_count_label.config(text=txt)
 
     def _refresh_radial_count(self):
@@ -505,9 +376,9 @@ class TestFrame(tk.Frame):
         if not st.current_base_folder:
             return
         n, vmin, vmax = dcmod.count_radial_archives(st.current_base_folder, list(DEFECT_CATEGORIES.keys()))
-        txt = f"Tubes avec radial connu : {n}"
+        txt = f"Radial : {n} tube(s)"
         if n:
-            txt += f" ({vmin} à {vmax} bar)"
+            txt += f" ({vmin:g} à {vmax:g} bar)"
         self.radial_count_label.config(text=txt)
 
     def archive_category(self):
@@ -546,115 +417,233 @@ class TestFrame(tk.Frame):
         except Exception as e:
             messagebox.showerror("Erreur", str(e))
 
-    def train_category(self):
-        st = self.controller.state_data
-        if not st.current_base_folder:
-            messagebox.showwarning("Attention", "Aucune base de référence chargée.")
-            return
-        cat = self._current_category()
-        info = DEFECT_CATEGORIES[cat]
-        cfg = st.cfg
-        log_win, log = self._open_log_window(f"Entraînement du modèle {info['label']}")
-        try:
-            model_path, bundle = dcmod.train_regression_model(
-                st.current_base_folder, cat, cfg, n_bins=cfg.get("IA_N_BINS", 20), log=log
-            )
-            r2_txt = "N/A" if bundle["r2_cv"] is None else f"{bundle['r2_cv']:.3f}"
-            messagebox.showinfo(
-                f"Modèle {info['label']} entraîné",
-                f"Modèle entraîné sur {bundle['n_samples']} tube(s) "
-                f"({bundle['value_min']}{info['unit']} à {bundle['value_max']}{info['unit']}).\n"
-                f"R² (validation croisée) : {r2_txt}\n\n"
-                "Ce modèle est désormais utilisé automatiquement : cette valeur estimée "
-                "s'affichera pour chaque tube testé."
-            )
-        except Exception as e:
-            messagebox.showerror("Erreur d'entraînement", str(e))
+    # ------------------------------------------------------------------
+    # Entraînement unique et correction des tubes archivés
+    # ------------------------------------------------------------------
 
-    def train_radial(self):
+    def train_all(self):
+        """Entraîne d'un coup les trois modèles : IA (bon / mauvais collage), humidité et
+        radial. Un modèle qui n'a pas assez d'exemples est simplement ignoré, avec la raison."""
         st = self.controller.state_data
         if not st.current_base_folder:
             messagebox.showwarning("Attention", "Aucune base de référence chargée.")
             return
         cfg = st.cfg
-        log_win, log = self._open_log_window("Entraînement du modèle Radial")
-        try:
-            model_path, bundle = dcmod.train_radial_model(
-                st.current_base_folder, list(DEFECT_CATEGORIES.keys()), cfg,
-                n_bins=cfg.get("IA_N_BINS", 20), log=log
-            )
-            r2_txt = "N/A" if bundle["r2_cv"] is None else f"{bundle['r2_cv']:.3f}"
-            messagebox.showinfo(
-                "Modèle Radial entraîné",
-                f"Modèle entraîné sur {bundle['n_samples']} tube(s), toutes catégories confondues "
-                f"({bundle['value_min']} à {bundle['value_max']} bar).\n"
-                f"R² (validation croisée) : {r2_txt}"
-            )
-        except Exception as e:
-            messagebox.showerror("Erreur d'entraînement", str(e))
+        base = st.current_base_folder
+        n_bins = cfg.get("IA_N_BINS", 20)
+        log_win, log = self._open_log_window("Entraînement des modèles : IA, humidité, radial")
+        results = []
 
-    def edit_radial_archive(self):
-        """Parcourt les tubes déjà archivés (toutes catégories) pour y ajouter ou
-        corriger une valeur de résistance radiale, sans refaire d'acquisition —
-        utile pour les tubes déjà testés avant que le suivi radial n'existe."""
+        def run(title, short, fn):
+            log("\n" + "=" * 56 + f"\n{title}\n" + "=" * 56)
+            try:
+                results.append(("ok", fn()))
+            except ValueError as e:                    # pas assez d'exemples
+                log(f"⚠ Ignoré : {e}")
+                results.append(("skip", f"{short} : ignoré, {str(e).split('. ')[0].rstrip('.')}."))
+            except Exception as e:
+                log(f"✖ Erreur : {e}")
+                results.append(("err", f"{short} : erreur, {e}"))
+
+        def train_ia():
+            model_path, b = iamod.train_ia_model(base, cfg, n_bins=n_bins, log=log)
+            cfg["CHEMIN_MODELE_IA"] = model_path
+            cfgmod.save_config(cfg)
+            auc = b.get("auc_cv")
+            return (f"IA : {b['n_sain']} sain(s) et {b['n_defaut']} défaut(s)"
+                    + (f", AUC {auc:.2f}" if auc is not None else ""))
+
+        def train_humidity():
+            _, b = dcmod.train_regression_model(base, "humidite", cfg, n_bins=n_bins, log=log)
+            return (f"Humidité : {b['n_samples']} tubes"
+                    + (f", R² {b['r2_cv']:.2f}" if b["r2_cv"] is not None else ""))
+
+        def train_radial():
+            _, b = dcmod.train_radial_model(base, list(DEFECT_CATEGORIES.keys()), cfg, n_bins=n_bins, log=log)
+            return (f"Radial : {b['n_samples']} tubes"
+                    + (f", R² {b['r2_cv']:.2f}" if b["r2_cv"] is not None else ""))
+
+        run("1. Modèle IA (bon / mauvais collage)", "IA", train_ia)
+        run("2. Modèle humidité", "Humidité", train_humidity)
+        run("3. Modèle radial", "Radial", train_radial)
+
+        self._refresh_ia_status()
+        self._refresh_category_count()
+        self._refresh_radial_count()
+
+        marks = {"ok": "✔", "skip": "⚠", "err": "✖"}
+        lines = [f"{marks[kind]} {text}" for kind, text in results]
+        trained = sum(1 for kind, _ in results if kind == "ok")
+        msg = "\n".join(lines)
+        if trained:
+            msg += ("\n\nLes modèles entraînés sont utilisés automatiquement lors des prochains tests."
+                    "\nAUC et R² viennent d'une validation croisée sur les acquisitions : plusieurs "
+                    "acquisitions d'un même tube se ressemblent, ce qui les rend optimistes. "
+                    "Validez sur des tubes jamais archivés.")
+        if trained == len(results):
+            messagebox.showinfo("Modèles entraînés", msg)
+        else:
+            messagebox.showwarning("Entraînement terminé", msg)
+
+    def edit_archived_tube(self):
+        """Corrige un tube déjà archivé, quelle que soit l'archive : nom, statut sain / défaut,
+        humidité, radial. Les deux archives (IA et humidité / radial) sont tenues cohérentes."""
         st = self.controller.state_data
         if not st.current_base_folder:
             messagebox.showwarning("Attention", "Aucune base de référence chargée.")
             return
-        records = dcmod.list_labeled_tubes(st.current_base_folder, list(DEFECT_CATEGORIES.keys()))
-        if not records:
-            messagebox.showinfo("Aucune archive", "Aucun tube archivé pour l'instant.")
-            return
-
+        base = st.current_base_folder
         win = tk.Toplevel(self)
-        win.title("Modifier une archive — ajouter/corriger le radial")
-        win.geometry("620x400")
+        win.title("Corriger un tube archivé")
+        win.geometry("960x660")
 
-        columns = ("tube", "categorie", "valeur", "radial")
-        tree = ttk.Treeview(win, columns=columns, show="headings", height=15)
-        for c, h, w in zip(columns, ("Tube", "Catégorie", "Valeur", "Radial actuel"), (160, 130, 120, 120)):
+        top = tk.Frame(win)
+        top.pack(fill="x", padx=10, pady=(10, 4))
+        tk.Label(top, text="Rechercher un tube :", font=("Segoe UI", 10)).pack(side="left")
+        search_var = tk.StringVar()
+        tk.Entry(top, textvariable=search_var, width=24).pack(side="left", padx=6)
+        count_lbl = tk.Label(top, text="", font=("Segoe UI", 10), fg="#555555")
+        count_lbl.pack(side="right")
+
+        columns = ("tube", "statut", "humidite", "radial", "date")
+        tree = ttk.Treeview(win, columns=columns, show="headings", selectmode="browse", height=13)
+        for c, h, w in zip(columns, ("Tube", "Statut IA", "Humidité", "Radial", "Archivé le"),
+                           (250, 100, 120, 120, 190)):
             tree.heading(c, text=h)
             tree.column(c, width=w)
-        tree.pack(fill="both", expand=True, padx=8, pady=8)
+        tree.pack(fill="both", expand=True, padx=10, pady=4)
 
-        for rec in records:
-            label = DEFECT_CATEGORIES.get(rec["category"], {}).get("label", rec["category"])
-            radial_txt = "-" if rec["radial"] is None else f"{rec['radial']} {rec['radial_unit']}"
-            tree.insert("", "end", iid=rec["meta_path"], values=(
-                rec["tube"], label, f"{rec['value']} {rec['unit']}", radial_txt
-            ))
+        form = tk.LabelFrame(win, text="Corriger le tube sélectionné", font=("Segoe UI", 10, "bold"),
+                             padx=10, pady=8)
+        form.pack(fill="x", padx=10, pady=6)
+        name_var, status_var, hum_var, rad_var = (tk.StringVar() for _ in range(4))
+        tk.Label(form, text="Nom :").grid(row=0, column=0, sticky="e", padx=4, pady=3)
+        tk.Entry(form, textvariable=name_var, width=28).grid(row=0, column=1, sticky="w")
+        tk.Label(form, text="Statut :").grid(row=0, column=2, sticky="e", padx=(18, 4))
+        ttk.Combobox(form, state="readonly", width=12, textvariable=status_var,
+                     values=["", "Sain", "Défaut"]).grid(row=0, column=3, sticky="w")
+        tk.Label(form, text="Humidité (%) :").grid(row=1, column=0, sticky="e", padx=4, pady=3)
+        tk.Entry(form, textvariable=hum_var, width=12).grid(row=1, column=1, sticky="w")
+        tk.Label(form, text="Radial (bar) :").grid(row=1, column=2, sticky="e", padx=(18, 4))
+        tk.Entry(form, textvariable=rad_var, width=12).grid(row=1, column=3, sticky="w")
+        tk.Label(form, text=("Statut vide : tube non archivé en IA (laissez vide pour ne rien créer). "
+                             "Radial vide : non mesuré. La virgule est acceptée pour les nombres."),
+                 font=("Segoe UI", 9), fg="#555555", wraplength=880, justify="left"
+                 ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
-        def on_edit():
+        result_lbl = tk.Label(win, text="", font=("Segoe UI", 9, "bold"), wraplength=900, justify="left")
+        result_lbl.pack(anchor="w", padx=10)
+        reminder = tk.Label(win, text="", font=("Segoe UI", 9, "bold"), fg="#b31412",
+                            wraplength=900, justify="left")
+        reminder.pack(anchor="w", padx=10)
+
+        rows = {}
+        status_text = {"sain": "Sain", "defaut": "Défaut"}
+        keep_result = {"on": False}   # garde le message vert pendant la re-sélection automatique
+
+        def clear_form():
+            for v in (name_var, status_var, hum_var, rad_var):
+                v.set("")
+
+        def on_select(event=None):
             sel = tree.selection()
             if not sel:
-                messagebox.showwarning("Attention", "Sélectionnez un tube dans la liste.", parent=win)
                 return
-            meta_path = sel[0]
-            radial = simpledialog.askfloat(
-                "Résistance radiale", "Nouvelle valeur de résistance radiale (bar) :", parent=win
-            )
-            if radial is None:
-                return
-            dcmod.update_radial(meta_path, radial, radial_unit="bar")
-            values = list(tree.item(meta_path)["values"])
-            values[3] = f"{radial} bar"
-            tree.item(meta_path, values=values)
+            p = rows[sel[0]]
+            name_var.set(p["name"])
+            status_var.set(status_text.get(p["ia_label"], ""))
+            hum_var.set("" if p["humidity"] is None else str(p["humidity"]))
+            rad_var.set("" if p["radial"] is None else str(p["radial"]))
+            if not keep_result["on"]:
+                result_lbl.config(text="")
+
+        def refresh(select_name=None):
+            pairs = aedmod.list_tube_pairs(base)
+            needle = search_var.get().strip().lower()
+            tree.delete(*tree.get_children())
+            rows.clear()
+            shown = 0
+            for i, p in enumerate(pairs):
+                if needle and needle not in p["name"].lower():
+                    continue
+                iid = str(i)
+                rows[iid] = p
+                shown += 1
+                tree.insert("", "end", iid=iid, values=(
+                    p["name"], status_text.get(p["ia_label"], "—"),
+                    "—" if p["humidity"] is None else f"{p['humidity']:g} %",
+                    "—" if p["radial"] is None else f"{p['radial']:g} bar",
+                    p["date"] or "",
+                ))
+            count_lbl.config(text=f"{shown} tube(s) affiché(s) sur {len(pairs)}")
+            clear_form()
+            if select_name:
+                for iid, p in rows.items():
+                    if p["name"] == select_name:
+                        tree.selection_set(iid)
+                        tree.see(iid)
+                        on_select()
+                        break
+            self._refresh_ia_status()
+            self._refresh_category_count()
             self._refresh_radial_count()
-            refresh_reminder()
 
-        tk.Button(win, text="Modifier le radial du tube sélectionné", command=on_edit
-                  ).pack(pady=(0, 4))
+        def parse_number(text, label):
+            text = text.strip().replace(",", ".")
+            if not text:
+                return None
+            try:
+                return float(text)
+            except ValueError:
+                raise ValueError(f"{label} : « {text} » n'est pas un nombre.")
 
-        reminder_label = tk.Label(win, text="", font=("Segoe UI", 9, "bold"), fg="#b31412")
-        reminder_label.pack(pady=(0, 8))
+        def save():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showwarning("Attention", "Sélectionnez d'abord un tube dans la liste.", parent=win)
+                return
+            p = rows[sel[0]]
+            new_name = name_var.get().strip()
+            try:
+                hum = parse_number(hum_var.get(), "Humidité")
+                rad = parse_number(rad_var.get(), "Radial")
+                label = {"Sain": "sain", "Défaut": "defaut", "": None}[status_var.get()]
+                if new_name and new_name != p["name"] and any(
+                        q["name"] == new_name for q in aedmod.list_tube_pairs(base)):
+                    if not messagebox.askyesno(
+                            "Nom déjà utilisé",
+                            f"Un autre tube archivé s'appelle déjà « {new_name} ».\n"
+                            "Continuer quand même ?", parent=win):
+                        return
+                actions = aedmod.apply_tube_changes(base, p, new_name, label, hum, rad)
+            except ValueError as e:
+                messagebox.showerror("Valeur invalide", str(e), parent=win)
+                return
+            except Exception as e:
+                messagebox.showerror(
+                    "Erreur", f"La correction a échoué : {e}\n\nLa liste est actualisée : vérifiez l'état "
+                              "réel du tube avant de recommencer.", parent=win)
+                refresh()
+                return
+            if not actions:
+                result_lbl.config(text="Aucune modification à enregistrer.", fg="#555555")
+                return
+            keep_result["on"] = True
+            refresh(select_name=new_name)
+            result_lbl.config(text="Enregistré : " + " ; ".join(actions), fg="#1e8e3e")
+            win.after(300, lambda: keep_result.update(on=False))
+            reminder.config(text="Les modèles déjà entraînés ne tiennent pas compte de cette correction : "
+                                 "cliquez sur « Entraîner les modèles ».")
 
-        def refresh_reminder():
-            if "radial" not in dcmod.discover_models(st.current_base_folder):
-                reminder_label.config(
-                    text="⚠ N'oubliez pas de cliquer sur « Entraîner le modèle Radial » "
-                         "une fois vos valeurs saisies — l'archivage seul ne suffit pas."
-                )
-            else:
-                reminder_label.config(text="")
+        tree.bind("<<TreeviewSelect>>", on_select)
+        search_var.trace_add("write", lambda *a: refresh())
 
-        refresh_reminder()
+        btns = tk.Frame(win)
+        btns.pack(pady=(4, 12))
+        tk.Button(btns, text="💾 Enregistrer la correction", font=("Segoe UI", 10, "bold"),
+                  command=save).grid(row=0, column=0, padx=6)
+        tk.Button(btns, text="🧠 Entraîner les modèles", font=("Segoe UI", 10),
+                  command=self.train_all).grid(row=0, column=1, padx=6)
+        tk.Button(btns, text="Fermer", font=("Segoe UI", 10), command=win.destroy).grid(row=0, column=2, padx=6)
+
+        refresh()
