@@ -115,10 +115,20 @@ class TestFrame(tk.Frame):
         self.archive_defaut_btn = tk.Button(confirm_frame, text="🚩 Confirmer DÉFAUT", state="disabled",
                                              command=lambda: self.archive_current(1))
         self.archive_defaut_btn.grid(row=0, column=1, padx=3, pady=2)
-        self.archive_category_btn = tk.Button(
-            info_col, text="📌 Archiver avec humidité (et radial)",
-            font=("Segoe UI", 9), state="disabled", command=self.archive_category)
-        self.archive_category_btn.pack(anchor="w", fill="x", pady=(4, 2))
+
+        # Valeurs mesurées du tube testé (facultatives) : archivées avec lui, puis utilisées
+        # à l'entraînement des modèles humidité et radial.
+        values_frame = tk.Frame(info_col)
+        values_frame.pack(anchor="w", pady=(4, 0))
+        self.hum_var, self.rad_var = tk.StringVar(), tk.StringVar()
+        tk.Label(values_frame, text="Humidité (%) :", font=("Segoe UI", 9)).grid(row=0, column=0, sticky="e", padx=(3, 2))
+        self.hum_entry = tk.Entry(values_frame, textvariable=self.hum_var, width=8, state="disabled")
+        self.hum_entry.grid(row=0, column=1, padx=(0, 8))
+        tk.Label(values_frame, text="Radial (bar) :", font=("Segoe UI", 9)).grid(row=0, column=2, sticky="e", padx=(0, 2))
+        self.rad_entry = tk.Entry(values_frame, textvariable=self.rad_var, width=8, state="disabled")
+        self.rad_entry.grid(row=0, column=3)
+        tk.Label(info_col, text="Facultatif : une seule valeur ou aucune suffit.",
+                 font=("Segoe UI", 8), fg="#777777").pack(anchor="w", pady=(0, 2))
 
         self.archive_count_label = tk.Label(info_col, text="IA : 0 sain / 0 défaut",
                                              font=("Segoe UI", 9), fg="#555555")
@@ -140,6 +150,7 @@ class TestFrame(tk.Frame):
         self._current_tube_df = None
         self._current_tube_name = None
         self._current_eval = None
+        self._values_archived = False   # humidité / radial du tube courant déjà archivés ?
 
     def on_show(self):
         st = self.controller.state_data
@@ -209,9 +220,9 @@ class TestFrame(tk.Frame):
             self._current_tube_df = None
             self._current_tube_name = None
             self._current_eval = None
-            for btn in (self.enrich_btn, self.export_btn, self.archive_sain_btn,
-                        self.archive_defaut_btn, self.archive_category_btn):
+            for btn in (self.enrich_btn, self.export_btn, self.archive_sain_btn, self.archive_defaut_btn):
                 btn.config(state="disabled")
+            self._set_value_fields(False)
             return
 
         self.banner.show(ev)
@@ -225,7 +236,8 @@ class TestFrame(tk.Frame):
         self.export_btn.config(state="normal")
         self.archive_sain_btn.config(state="normal")
         self.archive_defaut_btn.config(state="normal")
-        self.archive_category_btn.config(state="normal")
+        self._values_archived = False
+        self._set_value_fields(True)
         self._refresh_category_count()
         self._refresh_radial_count()
 
@@ -319,6 +331,11 @@ class TestFrame(tk.Frame):
         if self._current_tube_df is None or not st.current_base_folder:
             return
         libelle = "SAIN" if label == 0 else "DÉFAUT DE COLLAGE"
+        try:
+            hum, rad = self._read_value_fields()      # contrôle avant d'archiver quoi que ce soit
+        except ValueError as e:
+            messagebox.showerror("Valeur invalide", str(e))
+            return
         if not messagebox.askyesno(
             "Confirmer l'archivage",
             f"Confirmez-vous que ce tube est réellement « {libelle} » "
@@ -331,7 +348,13 @@ class TestFrame(tk.Frame):
                 label, extra_info={"health_index": self._current_eval["health_index"] if self._current_eval else None}
             )
             self._refresh_ia_status()
-            messagebox.showinfo("Archivé", f"Tube archivé comme « {libelle} ».")
+            msg = f"Tube archivé comme « {libelle} »."
+            status, text = self._archive_current_values(hum, rad)
+            if status == "ok":
+                msg += f"\nHumidité / radial archivés aussi : {text}."
+            elif status == "deja":
+                msg += "\n(Humidité / radial déjà archivés pour ce tube.)"
+            messagebox.showinfo("Archivé", msg)
         except Exception as e:
             messagebox.showerror("Erreur", str(e))
 
@@ -381,41 +404,60 @@ class TestFrame(tk.Frame):
             txt += f" ({vmin:g} à {vmax:g} bar)"
         self.radial_count_label.config(text=txt)
 
-    def archive_category(self):
+    def _set_value_fields(self, enabled):
+        """Vide les cases humidité / radial et les active (tube valide) ou les désactive."""
+        self.hum_var.set("")
+        self.rad_var.set("")
+        state = "normal" if enabled else "disabled"
+        self.hum_entry.config(state=state)
+        self.rad_entry.config(state=state)
+
+    def _read_value_fields(self):
+        """Lit les deux cases. Retourne (humidité, radial) ; None = case vide.
+        Lève ValueError si une valeur n'est pas un nombre positif."""
+        def parse(var, label):
+            raw = var.get().strip()
+            if not raw:
+                return None
+            try:
+                value = float(raw.replace(",", "."))
+            except ValueError:
+                raise ValueError(f"{label} : « {raw} » n'est pas un nombre.")
+            if value < 0:
+                raise ValueError(f"{label} : la valeur ne peut pas être négative.")
+            return value
+        return parse(self.hum_var, "Humidité"), parse(self.rad_var, "Radial")
+
+    def _archive_current_values(self, hum, rad):
+        """Archive l'humidité et / ou le radial saisis pour le tube testé (une seule valeur
+        suffit). Retourne un couple (état, texte) :
+        ("aucune", "")   les deux cases sont vides : rien à faire ;
+        ("sans_tube", "") valeurs saisies mais aucun tube valide à archiver ;
+        ("deja", "")     les valeurs de ce tube sont déjà archivées ;
+        ("ok", "...")    archivé, le texte décrit ce qui l'a été."""
         st = self.controller.state_data
+        if hum is None and rad is None:
+            return "aucune", ""
         if self._current_tube_df is None or not st.current_base_folder:
-            return
-        cat = self._current_category()
-        info = DEFECT_CATEGORIES[cat]
-        valeur = simpledialog.askfloat(f"{info['label']} connu(e)", info["prompt"], parent=self)
-        if valeur is None:
-            return
-        radial = simpledialog.askfloat(
-            "Résistance radiale (optionnel)",
-            "Résistance radiale connue pour ce tube (bar) — laissez vide si non mesurée "
-            "pour l'instant, vous pourrez l'ajouter plus tard :",
-            parent=self,
+            return "sans_tube", ""
+        if self._values_archived:
+            return "deja", ""
+        dcmod.archive_labeled_tube(
+            st.current_base_folder, "humidite", self._current_tube_name, self._current_tube_df,
+            value=hum, unit="%", radial=rad, radial_unit="bar",
+            extra_info={"health_index": self._current_eval["health_index"] if self._current_eval else None}
         )
-        try:
-            dcmod.archive_labeled_tube(
-                st.current_base_folder, cat, self._current_tube_name,
-                self._current_tube_df, value=valeur, unit=info["unit"],
-                radial=radial, radial_unit="bar",
-                extra_info={"health_index": self._current_eval["health_index"] if self._current_eval else None}
-            )
-            self._refresh_category_count()
-            self._refresh_radial_count()
-            msg = f"Tube archivé — {info['label']} : {valeur} {info['unit']}."
-            if radial is not None:
-                msg += f"\nRésistance radiale : {radial} bar."
-                if "radial" not in dcmod.discover_models(st.current_base_folder):
-                    msg += ("\n\n⚠ Le modèle Radial n'a encore jamais été entraîné — "
-                            "l'archivage seul ne suffit pas. Cliquez sur « Entraîner le "
-                            "modèle Radial » quand vous aurez assez de tubes pour qu'il "
-                            "s'affiche dans les résultats.")
-            messagebox.showinfo("Archivé", msg)
-        except Exception as e:
-            messagebox.showerror("Erreur", str(e))
+        self._values_archived = True
+        self.hum_var.set("")
+        self.rad_var.set("")
+        parts = []
+        if hum is not None:
+            parts.append(f"humidité {hum:g} %")
+        if rad is not None:
+            parts.append(f"radial {rad:g} bar")
+        self._refresh_category_count()
+        self._refresh_radial_count()
+        return "ok", " et ".join(parts)
 
     # ------------------------------------------------------------------
     # Entraînement unique et correction des tubes archivés
@@ -431,7 +473,31 @@ class TestFrame(tk.Frame):
         cfg = st.cfg
         base = st.current_base_folder
         n_bins = cfg.get("IA_N_BINS", 20)
+
+        # 1) Valeurs saisies pour le tube testé : archivées d'abord (humidité seule, radial seul,
+        #    les deux ou aucune : l'entraînement a lieu dans tous les cas, sans blocage).
+        try:
+            hum, rad = self._read_value_fields()
+        except ValueError as e:
+            messagebox.showerror("Valeur invalide", str(e))
+            return
+        try:
+            vstatus, vtext = self._archive_current_values(hum, rad)
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Archivage de l'humidité / du radial impossible : {e}")
+            return
+        notes = []
+        if vstatus == "ok":
+            notes.append(("ok", f"Tube testé archivé avec : {vtext}."))
+        elif vstatus == "sans_tube":
+            notes.append(("skip", "Valeurs saisies ignorées : aucun tube testé à archiver."))
+        elif vstatus == "deja":
+            notes.append(("skip", "Valeurs saisies ignorées : celles de ce tube sont déjà archivées "
+                                  "(utilisez « Corriger un tube archivé » pour les modifier)."))
+
         log_win, log = self._open_log_window("Entraînement des modèles : IA, humidité, radial")
+        for _, text in notes:
+            log(text)
         results = []
 
         def run(title, short, fn):
@@ -472,7 +538,7 @@ class TestFrame(tk.Frame):
         self._refresh_radial_count()
 
         marks = {"ok": "✔", "skip": "⚠", "err": "✖"}
-        lines = [f"{marks[kind]} {text}" for kind, text in results]
+        lines = [f"{marks[kind]} {text}" for kind, text in notes + results]
         trained = sum(1 for kind, _ in results if kind == "ok")
         msg = "\n".join(lines)
         if trained:
@@ -480,7 +546,7 @@ class TestFrame(tk.Frame):
                     "\nAUC et R² viennent d'une validation croisée sur les acquisitions : plusieurs "
                     "acquisitions d'un même tube se ressemblent, ce qui les rend optimistes. "
                     "Validez sur des tubes jamais archivés.")
-        if trained == len(results):
+        if trained == len(results) and all(kind == "ok" for kind, _ in notes):
             messagebox.showinfo("Modèles entraînés", msg)
         else:
             messagebox.showwarning("Entraînement terminé", msg)
@@ -527,7 +593,8 @@ class TestFrame(tk.Frame):
         tk.Label(form, text="Radial (bar) :").grid(row=1, column=2, sticky="e", padx=(18, 4))
         tk.Entry(form, textvariable=rad_var, width=12).grid(row=1, column=3, sticky="w")
         tk.Label(form, text=("Statut vide : tube non archivé en IA (laissez vide pour ne rien créer). "
-                             "Radial vide : non mesuré. La virgule est acceptée pour les nombres."),
+                             "Humidité ou radial vide : non mesuré (au moins une des deux valeurs doit rester). "
+                             "La virgule est acceptée pour les nombres."),
                  font=("Segoe UI", 9), fg="#555555", wraplength=880, justify="left"
                  ).grid(row=2, column=0, columnspan=4, sticky="w", pady=(6, 0))
 
