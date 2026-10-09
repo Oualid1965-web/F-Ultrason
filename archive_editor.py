@@ -72,8 +72,9 @@ def apply_tube_changes(base_folder, pair, new_name, new_label, new_humidity, new
 
     new_name     : nom final (obligatoire)
     new_label    : "sain", "defaut" ou None (= ne pas toucher / ne pas créer d'archive IA)
-    new_humidity : taux d'humidité en % ou None
-    new_radial   : résistance radiale en bar ou None (= pas de radial)
+    new_humidity : taux d'humidité en % ou None (= non mesuré)
+    new_radial   : résistance radiale en bar ou None (= non mesuré)
+                   Un tube archivé avec humidité / radial doit garder au moins une des deux valeurs.
 
     Les contrôles sont faits AVANT toute écriture. Retourne la liste des actions réalisées
     (vide si rien n'a changé). Lève ValueError si une valeur est invalide."""
@@ -90,14 +91,14 @@ def apply_tube_changes(base_folder, pair, new_name, new_label, new_humidity, new
         raise ValueError("L'humidité ne peut pas être négative.")
     if new_radial is not None and new_radial < 0:
         raise ValueError("La résistance radiale ne peut pas être négative.")
-    if has_cat and new_humidity is None:
-        raise ValueError("L'humidité ne peut pas être vide : ce tube est archivé avec une humidité.")
-    if not has_cat and new_humidity is None and new_radial is not None:
-        raise ValueError("Pour enregistrer un radial, renseignez aussi l'humidité du tube.")
+    if has_cat and new_humidity is None and new_radial is None:
+        raise ValueError("Humidité et radial ne peuvent pas être vides tous les deux : "
+                         "ce tube est archivé avec au moins une de ces valeurs.")
+    create_cat = (not has_cat) and (new_humidity is not None or new_radial is not None)
 
     # ---- courbes lues AVANT toute écriture : changer le statut déplace le fichier IA, et la
     # création de l'entrée manquante a besoin de cette même courbe ----
-    curve_for_cat = _read_curve(pair["ia_csv"]) if (not has_cat and new_humidity is not None) else None
+    curve_for_cat = _read_curve(pair["ia_csv"]) if create_cat else None
     curve_for_ia = (_read_curve(pair["cat_meta"][:-5] + ".csv")
                     if (not has_ia and new_label is not None) else None)
 
@@ -126,12 +127,15 @@ def apply_tube_changes(base_folder, pair, new_name, new_label, new_humidity, new
             actions.append(f"Humidité : {_fmt(pair['humidity'])} → {_fmt(new_humidity)} %")
         if new_radial != pair["radial"]:
             actions.append(f"Radial : {_fmt(pair['radial'])} → {_fmt(new_radial)} bar")
-    elif new_humidity is not None:
+    elif create_cat:
         dcmod.archive_labeled_tube(base_folder, CATEGORY, name, curve_for_cat, value=new_humidity, unit="%",
                                    radial=new_radial, radial_unit="bar",
                                    extra_info={"cree_depuis": "archive IA"})
-        txt = f"humidité {_fmt(new_humidity)} %"
+        parts = []
+        if new_humidity is not None:
+            parts.append(f"humidité {_fmt(new_humidity)} %")
         if new_radial is not None:
-            txt += f", radial {_fmt(new_radial)} bar"
+            parts.append(f"radial {_fmt(new_radial)} bar")
+        txt = ", ".join(parts)
         actions.append(f"Archive humidité / radial créée ({txt}) à partir de la courbe de l'archive IA")
     return actions

@@ -46,8 +46,9 @@ def archive_labeled_tube(base_folder, category, tube_name, tube_df, value, unit=
                           radial=None, radial_unit="bar", extra_info=None):
     """Archive un tube avec une valeur connue (ex. taux d'humidité mesuré en laboratoire
     ou par un instrument de référence) pour servir d'exemple d'entraînement.
-    `radial` est optionnel — laissez None si la résistance radiale n'est pas encore
-    connue pour ce tube ; elle pourra être ajoutée plus tard via update_radial()."""
+    `value` et `radial` sont tous deux optionnels (None = non mesuré), mais au moins un des
+    deux doit être renseigné : une entrée avec seulement le radial sert au modèle radial,
+    une entrée avec seulement l'humidité sert au modèle humidité."""
     d = _archive_dir(base_folder, category)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     safe = "".join(
@@ -268,7 +269,8 @@ def train_regression_model(base_folder, category, cfg, n_bins=None, log=print):
     if not SKLEARN_AVAILABLE:
         raise RuntimeError("scikit-learn n'est pas installé. Exécutez : pip install scikit-learn")
     n_bins = n_bins or cfg.get("IA_N_BINS", 20)
-    records = _load_labeled_archive(base_folder, category)
+    # Une entrée archivée avec le seul radial n'a pas de valeur de catégorie : on l'écarte ici.
+    records = [r for r in _load_labeled_archive(base_folder, category) if r["value"] is not None]
     log(f"Tubes archivés disponibles pour '{category}' : {len(records)}")
     return _train_from_records(records, category, base_folder, cfg, n_bins, log, target_key="value")
 
