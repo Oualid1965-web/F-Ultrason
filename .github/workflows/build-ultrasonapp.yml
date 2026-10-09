@@ -4,15 +4,8 @@ on:
   push:
     branches: [ main, master ]
     paths:
-      - 'main.py'
+      - '*.py'
       - 'gui/**'
-      - 'config.py'
-      - 'daq_acquisition.py'
-      - 'signal_processing.py'
-      - 'tube_comparator.py'
-      - 'reference_base_builder.py'
-      - 'report_generator.py'
-      - 'ia_model_manager.py'
       - 'requirements.txt'
       - '.github/workflows/build-ultrasonapp.yml'
 jobs:
@@ -36,7 +29,9 @@ jobs:
           --collect-all scipy
           --collect-all sklearn
           --collect-all matplotlib
-          --hidden-import nidaqmx
+          --collect-all nidaqmx
+          --collect-all nitypes
+          --collect-all hightime
           main.py
       - name: Publier le .exe
         uses: actions/upload-artifact@v4
