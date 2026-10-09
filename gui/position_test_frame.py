@@ -261,6 +261,11 @@ class PositionTestFrame(tk.Frame):
         if raw_d is None:
             return
 
+        if raw_g.get("simulated") or raw_d.get("simulated"):
+            # Simulation autorisée dans les Réglages : aucun verdict valable, rien enregistré.
+            self.banner.show_simulation()
+            return
+
         try:
             # Journalisation individuelle (silencieuse) — nécessaire pour l'import Excel.
             self._log_row("Gauche", position_cm, name, raw_g, tube_type, pos_defaut_cm)
@@ -284,6 +289,7 @@ class PositionTestFrame(tk.Frame):
             ai_channel = SIDE_TO_CHANNEL[side]
             daq = daqmod.DaqController(cfg, ai_channel=ai_channel)
             daq.init_daq()
+            daq.require_hardware(cfg.get("AUTORISER_SIMULATION", 0))
             DATA = daq.acquire()
             FREQ_R, FFT_SIGNAL = spmod.compute_fft(
                 DATA, daq.fs_r_actual, cfg["F_MIN_FFT"], cfg["F_MAX_FFT"], cfg["N_POINTS_FFT"]
@@ -293,6 +299,7 @@ class PositionTestFrame(tk.Frame):
             ev = tcmod.evaluate_tube(FREQ_R, tube_df[cfg["PARAMETRE"]].values, st.current_df_ref, cfg)
             amp_max = round(float(tube_df["FFT Abs"].max()), 4)
             return {
+                "simulated": daq.simulated,
                 "side": side, "DATA": DATA, "fs_r": daq.fs_r_actual, "n_samples_r": daq.n_samples_r,
                 "FREQ_R": FREQ_R, "FFT_SIGNAL": FFT_SIGNAL, "tube_df": tube_df,
                 "ev": ev, "snr_acq": snr_acq, "amp_max": amp_max,
@@ -387,6 +394,7 @@ class PositionTestFrame(tk.Frame):
             ai_channel = SIDE_TO_CHANNEL[side]
             daq = daqmod.DaqController(cfg, ai_channel=ai_channel)
             daq.init_daq()
+            daq.require_hardware(cfg.get("AUTORISER_SIMULATION", 0))
             DATA = daq.acquire()
             FREQ_R, FFT_SIGNAL = spmod.compute_fft(
                 DATA, daq.fs_r_actual, cfg["F_MIN_FFT"], cfg["F_MAX_FFT"], cfg["N_POINTS_FFT"]
@@ -402,8 +410,12 @@ class PositionTestFrame(tk.Frame):
             self.canvas.draw()
             self.update_idletasks()
 
-            self.banner.show(ev)
             self._show_info(ev, snr_acq, position_cm, side)
+            if daq.simulated:
+                # Simulation autorisée dans les Réglages : aucun verdict valable, rien enregistré.
+                self.banner.show_simulation()
+                return True
+            self.banner.show(ev)
 
             results_csv = os.path.join(st.current_base_folder, "resultats_tests_position.csv")
             amp_max = round(float(tube_df["FFT Abs"].max()), 4)

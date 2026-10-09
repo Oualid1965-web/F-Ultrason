@@ -200,7 +200,7 @@ class TestFrame(tk.Frame):
         self.info_text.insert(tk.END, "\n".join(lines))
         self.info_text.config(state="disabled")
 
-    def _process_tube(self, name, DATA, fs_r, n_samples_r, tube_df):
+    def _process_tube(self, name, DATA, fs_r, n_samples_r, tube_df, simulated=False):
         st = self.controller.state_data
         cfg = dict(st.cfg)
         cfg["MODELES_CATEGORISATION"] = dcmod.discover_models(st.current_base_folder)
@@ -214,9 +214,21 @@ class TestFrame(tk.Frame):
         rgmod.plot_test_result(self.figure, DATA, fs_r, n_samples_r, FREQ_R, FFT_SIGNAL, ev)
         self.canvas.draw()
 
-        self.banner.show(ev)
         self._show_info(ev, snr_acq)
 
+        if simulated:
+            # Données aléatoires (simulation autorisée dans les Réglages) : aucun verdict
+            # valable, rien n'est enregistré, et toutes les actions d'archivage restent bloquées.
+            self.banner.show_simulation()
+            self._current_tube_df = None
+            self._current_tube_name = None
+            self._current_eval = None
+            for btn in (self.enrich_btn, self.export_btn, self.archive_sain_btn,
+                        self.archive_defaut_btn, self.archive_category_btn):
+                btn.config(state="disabled")
+            return
+
+        self.banner.show(ev)
         results_csv = os.path.join(st.current_base_folder, "resultats_tests.csv")
         rgmod.append_result_csv(results_csv, name, ev, snr_acq)
 
@@ -246,12 +258,16 @@ class TestFrame(tk.Frame):
         try:
             daq = daqmod.DaqController(cfg)
             daq.init_daq()
+            # Refuse de continuer si la carte n'est pas utilisée (données simulées), sauf
+            # autorisation explicite dans les Réglages.
+            daq.require_hardware(cfg.get("AUTORISER_SIMULATION", 0))
             DATA = daq.acquire()
             FREQ_R, FFT_SIGNAL = spmod.compute_fft(
                 DATA, daq.fs_r_actual, cfg["F_MIN_FFT"], cfg["F_MAX_FFT"], cfg["N_POINTS_FFT"]
             )
             tube_df = spmod.tube_dataframe(FREQ_R, FFT_SIGNAL)
-            self._process_tube(name, DATA, daq.fs_r_actual, daq.n_samples_r, tube_df)
+            self._process_tube(name, DATA, daq.fs_r_actual, daq.n_samples_r, tube_df,
+                               simulated=daq.simulated)
         except Exception as e:
             messagebox.showerror("Erreur d'acquisition", str(e))
 

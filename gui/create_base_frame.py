@@ -94,6 +94,8 @@ class CreateBaseFrame(tk.Frame):
         try:
             daq = daqmod.DaqController(cfg)
             daq.init_daq()
+            # Une base de référence ne doit JAMAIS être construite avec des données simulées.
+            daq.require_hardware(allow_simulation=False)
             DATA = daq.acquire()
             FREQ_R, FFT_SIGNAL = spmod.compute_fft(
                 DATA, daq.fs_r_actual, cfg["F_MIN_FFT"], cfg["F_MAX_FFT"], cfg["N_POINTS_FFT"]

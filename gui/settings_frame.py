@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 
 import config as cfgmod
+import daq_acquisition as daqmod
 import defect_categorization as dcmod
 
 
@@ -19,6 +20,7 @@ FIELDS = [
     ("CHEMIN_MODELE_IA", "file"),
 
     ("--- Acquisition DAQ ---", None),
+    ("AUTORISER_SIMULATION", "int"),
     ("DEVICE_NAME", "str"),
     ("T_SWEEP", "float"),
     ("FS_E", "float"),
@@ -40,6 +42,7 @@ HELP_TEXT = {
     "IQR_FACTOR": "Facteur IQR pour le rejet des tubes atypiques à la création de la base.",
     "IA_N_BINS": "Nombre de bandes de fréquence utilisées comme variables IA à l'entraînement.",
     "SEUIL_DECISION_IA": "Probabilité de défaut (0 à 1) à partir de laquelle l'IA décide MAUVAIS COLLAGE (0,5 par défaut).",
+    "AUTORISER_SIMULATION": "0 = refuser les données simulées si la carte est absente (recommandé). 1 = autoriser, pour tester l'interface sans matériel : rien n'est alors enregistré.",
     "CHEMIN_MODELE_IA": "Modèle .joblib actif (mis à jour automatiquement après entraînement).",
 }
 
@@ -102,6 +105,10 @@ class SettingsFrame(tk.Frame):
 
         tk.Label(self, text="Maintenance", font=("Segoe UI", 12, "bold")).pack(pady=(10, 2))
         tk.Button(
+            self, text="🔌 Diagnostic de la carte d'acquisition",
+            font=("Segoe UI", 10), command=self.diagnostic_daq
+        ).pack(pady=(0, 6))
+        tk.Button(
             self, text="🔧 Corriger l'unité radiale (N → bar) sur toutes les bases",
             font=("Segoe UI", 10), command=self.corriger_unite_radial
         ).pack(pady=(0, 15))
@@ -135,6 +142,31 @@ class SettingsFrame(tk.Frame):
             return
         cfgmod.save_config(cfg)
         messagebox.showinfo("Paramètres", "Paramètres enregistrés avec succès.")
+
+    def diagnostic_daq(self):
+        """Contrôle le module nidaqmx, le pilote NI-DAQmx, la carte et les voies, et dit
+        clairement si l'acquisition réelle est possible (sinon l'application serait en
+        simulation). Utile pour ne plus découvrir un passage en simulation après coup."""
+        cfg = self.controller.state_data.cfg
+        win = tk.Toplevel(self)
+        win.title("Diagnostic de la carte d'acquisition")
+        win.geometry("860x540")
+        txt = tk.Text(win, font=("Segoe UI", 10), wrap="word", padx=10, pady=10)
+        txt.pack(fill="both", expand=True)
+        txt.tag_configure("ok", foreground="#1e8e3e")
+        txt.tag_configure("err", foreground="#d93025", font=("Segoe UI", 10, "bold"))
+        txt.tag_configure("info", foreground="#44546A")
+        txt.insert(tk.END, "Diagnostic en cours…")
+        txt.update_idletasks()
+        try:
+            lines = daqmod.diagnose(cfg)
+        except Exception as e:
+            lines = [("err", f"Le diagnostic a échoué : {type(e).__name__}: {e}")]
+        txt.delete("1.0", tk.END)
+        marks = {"ok": "✔  ", "err": "✖  ", "info": "ℹ  "}
+        for level, text in lines:
+            txt.insert(tk.END, marks.get(level, "") + text + "\n\n", level)
+        txt.config(state="disabled")
 
     def corriger_unite_radial(self):
         if not messagebox.askyesno(

@@ -39,6 +39,13 @@ class StatusBanner(tk.Frame):
         self._paint(0, GRAY, "Aucun test effectué", "Décision selon le Health Index")
         self._paint(1, GRAY, "Décision de l'IA", "En attente d'un test")
 
+    def show_simulation(self):
+        """Affiché à la place du verdict quand l'acquisition était simulée (aléatoire) :
+        aucun verdict n'est valable et rien n'est enregistré."""
+        violet = "#6A1B9A"
+        self._paint(0, violet, "MODE SIMULATION", "Données aléatoires : aucun verdict valable")
+        self._paint(1, violet, "Rien n'est enregistré", "Vérifiez la carte : Réglages > Diagnostic")
+
     def show(self, ev):
         """ev : résultat d'evaluate_tube (ou un dict équivalent) avec les clés
         statut_base, health_index, et optionnellement decision_ia, probabilite_ia,
