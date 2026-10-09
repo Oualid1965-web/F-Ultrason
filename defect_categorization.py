@@ -138,6 +138,32 @@ def update_radial(meta_path, radial_value, radial_unit="bar"):
         json.dump(meta, f, indent=2, ensure_ascii=False)
 
 
+_UNSET = object()
+
+
+def update_labeled_tube(meta_path, tube=_UNSET, value=_UNSET, radial=_UNSET, radial_unit="bar"):
+    """Modifie une entrée déjà archivée : nom, valeur de la catégorie (ex. humidité) et/ou
+    résistance radiale (None = l'effacer). Les champs non fournis restent inchangés ; chaque
+    changement est consigné dans "historique". La courbe n'est pas modifiée."""
+    with open(meta_path, encoding="utf-8") as f:
+        meta = json.load(f)
+    hist = meta.setdefault("historique", [])
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def change(champ, old, new):
+        hist.append({"date": now, "champ": champ, "de": old, "vers": new})
+
+    if tube is not _UNSET and tube != meta.get("tube"):
+        change("nom", meta.get("tube"), tube); meta["tube"] = tube
+    if value is not _UNSET and value != meta.get("value"):
+        change("valeur", meta.get("value"), value); meta["value"] = value
+    if radial is not _UNSET and radial != meta.get("radial"):
+        change("radial", meta.get("radial"), radial); meta["radial"] = radial
+        meta["radial_unit"] = radial_unit
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
+
+
 def _load_labeled_archive(base_folder, category):
     d = os.path.join(base_folder, "categorisation_archive", category)
     records = []

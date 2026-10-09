@@ -47,7 +47,7 @@ def archive_tube(base_folder, tube_name, tube_df, label, extra_info=None):
     label : 0 = sain confirmé, 1 = défaut de collage confirmé
     """
     d = _archive_dir(base_folder, label)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")   # microsecondes : pas de collision de noms
     safe = "".join(
         c for c in os.path.splitext(tube_name)[0] if c.isalnum() or c in (" ", "_", "-")
     ).strip().replace(" ", "_")
@@ -97,6 +97,29 @@ def list_archived_tubes(base_folder):
                     pass
             records.append({"csv_path": fn, "label": sub, "tube": tube, "date": date})
     return records
+
+
+def rename_archived_tube(csv_path, new_name):
+    """Change le nom d'un tube déjà archivé (métadonnées uniquement : la courbe et le
+    nom du fichier ne bougent pas) et garde une trace dans "historique"."""
+    meta_path = csv_path[:-4] + ".json"
+    meta = {}
+    if os.path.exists(meta_path):
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            meta = {}
+    old = meta.get("tube", os.path.basename(csv_path)[:-4])
+    if old == new_name:
+        return
+    meta["tube"] = new_name
+    meta.setdefault("historique", []).append({
+        "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "champ": "nom", "de": old, "vers": new_name,
+    })
+    with open(meta_path, "w", encoding="utf-8") as f:
+        json.dump(meta, f, indent=2, ensure_ascii=False)
 
 
 def relabel_archived_tube(csv_path, new_label):
